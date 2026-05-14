@@ -518,6 +518,42 @@
     }
   }
 
+  // === 8-K ITEM CODE INTELLIGENCE ===
+  // Each 8-K must declare which "Items" it covers — standardized SEC codes.
+  // Extracting these tells us exactly what kind of event it is.
+  const EIGHT_K_ITEMS = {
+    '1.01': { label: 'Material agreement', tone: 'imp', why: 'Company entered a material definitive agreement — often a new contract, partnership, or licensing deal. Read for the counterparty and dollar terms.' },
+    '1.02': { label: 'Agreement terminated', tone: 'crit', why: 'A material agreement was ended. Usually negative — read carefully for which deal collapsed and why.' },
+    '1.03': { label: 'Bankruptcy / receivership', tone: 'crit', why: 'Bankruptcy filing or receivership. Severe negative event for shareholders.' },
+    '1.05': { label: 'Cybersecurity incident', tone: 'crit', why: 'Material cybersecurity breach disclosed. Required since late 2023. Read for scope and operational impact.' },
+    '2.01': { label: 'Acquisition or disposition', tone: 'imp', why: 'Company acquired or sold significant assets. Read for the price, what changed hands, and strategic rationale.' },
+    '2.02': { label: 'Earnings released', tone: 'imp', why: 'Quarterly or annual results released ahead of the formal 10-Q/10-K. Most important number-driven event.' },
+    '2.03': { label: 'New debt obligation', tone: 'crit', why: 'Company took on material debt or off-balance-sheet obligation. Read for size, interest rate, and terms.' },
+    '2.04': { label: 'Debt triggering event', tone: 'crit', why: 'A trigger occurred that increases the debt obligation (e.g. covenant breach). Usually severe negative.' },
+    '2.05': { label: 'Restructuring costs', tone: 'imp', why: 'Company committed to a restructuring with material costs. Often signals layoffs or strategic shift.' },
+    '2.06': { label: 'Asset impairment', tone: 'crit', why: 'Material write-down on goodwill or other assets. Acknowledgment that something they bought/built is worth less than thought.' },
+    '3.01': { label: 'Delisting notice', tone: 'crit', why: 'Stock exchange notified the company about delisting risk. Severe negative — stock may move to pink sheets.' },
+    '3.02': { label: 'Unregistered equity sale', tone: 'crit', why: 'Company sold shares without SEC registration — usually a PIPE or private placement. Often dilutive at a discount.' },
+    '3.03': { label: 'Shareholder rights modified', tone: 'imp', why: 'Material change to the rights of existing shareholders. Read for new preferred shares, voting changes, or poison pills.' },
+    '4.01': { label: 'Auditor changed', tone: 'crit', why: 'Company changed its accounting firm. Often suspicious — auditors leave when they disagree with management or find issues.' },
+    '4.02': { label: 'Financials cannot be relied on', tone: 'crit', why: 'Previously issued financial statements are no longer reliable. Restatement coming. Very bad signal — often the start of major problems.' },
+    '5.01': { label: 'Change of control', tone: 'imp', why: 'New party gained control of the company. Major event — read for who and at what price.' },
+    '5.02': { label: 'Executive change', tone: 'imp', why: 'Officer or director departed, appointed, or had compensation changed. Unexpected CEO/CFO departures are warning signs.' },
+    '5.03': { label: 'Bylaws amended', tone: 'norm', why: 'Charter or bylaws amended. Often routine but can include defensive provisions like staggered boards.' },
+    '5.04': { label: 'Pension blackout', tone: 'norm', why: 'Temporary lockup on employee retirement plans. Usually routine administrative event.' },
+    '5.05': { label: 'Ethics code waiver', tone: 'crit', why: 'Company waived its ethics code for a specific officer. Rare and concerning — read for who and why.' },
+    '5.07': { label: 'Shareholder vote results', tone: 'norm', why: 'Results of votes at the annual meeting. Read for any close votes — those signal shareholder dissent.' },
+    '5.08': { label: 'Shareholder proposals deadline', tone: 'norm', why: 'Routine procedural disclosure about when shareholders can submit proposals.' },
+    '6.01': { label: 'ABS disclosure', tone: 'norm', why: 'Asset-backed securities filing. Specialized.' },
+    '7.01': { label: 'Press release / Reg FD', tone: 'imp', why: 'A press release or public disclosure under Regulation FD. Often the company\'s official statement on news. Read the attached release.' },
+    '8.01': { label: 'Other material event', tone: 'imp', why: 'Catch-all for events that don\'t fit other categories. Could be anything from FDA approval to product launch to litigation. Read to find out.' },
+    '9.01': { label: 'Financial exhibits', tone: 'norm', why: 'Financial statements or supporting exhibits attached. Usually accompanies one of the other Items above.' }
+  };
+
+  function tonalityToClass(tone) {
+    return { crit: 'crit', imp: 'imp', gold: 'gold', norm: 'norm' }[tone] || 'norm';
+  }
+
   // === FILING METADATA ===
   function classify(formType) {
     const t = (formType || '').toUpperCase();
@@ -547,6 +583,75 @@
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return 9999;
     return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
+  }
+
+  // === 8-K SUMMARIZER ===
+  // Fetches the actual filing document and extracts what it says.
+  // For 8-Ks specifically, we extract:
+  //   1. Item codes (gives us specific category)
+  //   2. First paragraph of substance (gives us actual context)
+  //   3. Any press release attached (often the real news)
+  async function summarize8K(filingUrl) {
+    const result = await fetchViaProxy(filingUrl, false);
+    if (!result.ok) {
+      return { ok: false, error: result.error || 'Could not fetch filing' };
+    }
+    const html = result.data;
+    // Strip HTML to plain text
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    // Remove style, script, head elements
+    doc.querySelectorAll('style, script, head, meta, link').forEach(n => n.remove());
+    let text = doc.body ? doc.body.textContent : doc.documentElement.textContent;
+    text = text.replace(/\s+/g, ' ').replace(/\u00a0/g, ' ').trim();
+
+    // Extract Item codes — they appear as "Item X.XX" with various formats
+    const itemMatches = [...text.matchAll(/Item\s+(\d+\.\d+)/gi)];
+    const uniqueItems = [...new Set(itemMatches.map(m => m[1]))];
+
+    // Find the substance — the first meaningful paragraph after "Item X.XX"
+    let substance = '';
+    let leadItem = '';
+    for (const item of uniqueItems) {
+      const itemRegex = new RegExp('Item\\s+' + item.replace('.', '\\.') + '[\\.\\s]*([^\\n]{20,800})', 'i');
+      const match = text.match(itemRegex);
+      if (match && match[1]) {
+        // Clean up — remove the item title prefix, keep the substantive part
+        let chunk = match[1].trim();
+        // Skip past the title of the item (usually a short phrase ending with period)
+        const titleMatch = chunk.match(/^[A-Z][^.]{5,80}\.\s*(.{30,})/);
+        if (titleMatch) chunk = titleMatch[1];
+        substance = chunk.substring(0, 500).trim();
+        if (substance.length > 30) {
+          leadItem = item;
+          break;
+        }
+      }
+    }
+
+    // If no substance found via Item parsing, try grabbing first 500 chars of body text
+    // (excluding boilerplate)
+    if (!substance) {
+      // Skip past common boilerplate
+      const skipPattern = /(UNITED STATES|SECURITIES AND EXCHANGE|FORM 8-K|CURRENT REPORT|Date of Report|Commission File|Registrant|Exact name|Address of principal|telephone number|Check the appropriate box|Indicate by check mark|Securities registered pursuant)/gi;
+      let cleaned = text.replace(skipPattern, '');
+      cleaned = cleaned.replace(/\s+/g, ' ').trim();
+      // Find first sentence with substance after we get past the header
+      const afterHeader = cleaned.indexOf('Item ');
+      if (afterHeader > 0) {
+        substance = cleaned.substring(afterHeader, afterHeader + 600).trim();
+      } else {
+        substance = cleaned.substring(0, 500).trim();
+      }
+    }
+
+    return {
+      ok: true,
+      items: uniqueItems,
+      leadItem: leadItem,
+      substance: substance,
+      itemDetails: uniqueItems.map(i => EIGHT_K_ITEMS[i]).filter(x => x)
+    };
   }
 
   // === WATCHLIST MODE ===
@@ -645,6 +750,8 @@
     div.className = 'filing';
     const docUrl = filingDocUrl(f.cik, f.accession, f.primaryDoc);
     const indexUrl = 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=' + f.cik + '&type=' + encodeURIComponent(f.form) + '&dateb=&owner=include&count=10';
+    const isEightK = (f.form || '').toUpperCase().startsWith('8-K');
+    const summarizeBtn = isEightK ? '<button class="small secondary" data-summarize style="margin-left:6px;">Summarize this 8-K</button>' : '';
     div.innerHTML =
       '<div class="filing-head">' +
         '<div>' +
@@ -658,19 +765,63 @@
         ' · <a class="filing-link" href="' + indexUrl + '" target="_blank" rel="noopener">All ' + f.form + ' for this company</a>' +
       '</div>' +
       '<div class="filing-why"><b>Why this matters:</b> ' + f.classification.why + '</div>' +
-      '<div style="margin-top:8px;"><button class="small secondary" data-save-filing>Save to notebook</button></div>';
+      '<div class="summary-area" style="display:none; margin-top:8px; padding:10px 12px; background:var(--bg-soft); border-radius:6px; font-size:12px; line-height:1.55;"></div>' +
+      '<div style="margin-top:8px;"><button class="small secondary" data-save-filing>Save to notebook</button>' + summarizeBtn + '</div>';
+
     div.querySelector('[data-save-filing]').onclick = () => {
       const notes = getNotes();
+      const summaryEl = div.querySelector('.summary-area');
+      const summaryText = summaryEl && summaryEl.style.display !== 'none' ? '\n\nSummary: ' + summaryEl.dataset.plainText : '';
       notes.unshift({
         id: Date.now(),
         title: f.form + ' · ' + (f.ticker || f.company),
-        body: f.classification.label + ' — ' + (f.primaryDesc || '') + '\n\nDocument: ' + docUrl + '\n\nWhy: ' + f.classification.why,
+        body: f.classification.label + ' — ' + (f.primaryDesc || '') + '\n\nDocument: ' + docUrl + '\n\nWhy: ' + f.classification.why + summaryText,
         saved: new Date().toISOString()
       });
       saveNotes(notes);
       renderNotes();
       alert('Saved to notebook.');
     };
+
+    const sumBtn = div.querySelector('[data-summarize]');
+    if (sumBtn) {
+      sumBtn.onclick = async () => {
+        const area = div.querySelector('.summary-area');
+        area.style.display = 'block';
+        area.innerHTML = '<span class="spinner"></span>Fetching filing and parsing items...';
+        sumBtn.disabled = true;
+        const result = await summarize8K(docUrl);
+        sumBtn.disabled = false;
+        if (!result.ok) {
+          area.innerHTML = '<span style="color:var(--bad);">Could not fetch filing: ' + (result.error || 'unknown') + '. Click "Read filing" above to view it on SEC.gov directly.</span>';
+          return;
+        }
+        let html = '';
+        if (result.items.length > 0) {
+          html += '<div style="margin-bottom:8px;"><b>This 8-K covers:</b></div>';
+          html += '<ul style="margin:0 0 10px;padding-left:18px;">';
+          result.items.forEach(code => {
+            const info = EIGHT_K_ITEMS[code];
+            if (info) {
+              html += '<li style="margin-bottom:4px;"><b>Item ' + code + ' — ' + info.label + '</b><br><span style="color:var(--text-soft);">' + info.why + '</span></li>';
+            } else {
+              html += '<li style="margin-bottom:4px;">Item ' + code + ' (unrecognized — read the filing)</li>';
+            }
+          });
+          html += '</ul>';
+        }
+        if (result.substance) {
+          html += '<div><b>From the filing:</b><br>';
+          html += '<span style="color:var(--text-soft);font-style:italic;">"' + result.substance + (result.substance.length >= 480 ? '..."' : '"') + '</span></div>';
+        }
+        if (!result.items.length && !result.substance) {
+          html += '<span style="color:var(--text-soft);">No standard Item codes or readable substance extracted. The filing may be image-based or have an unusual format. Click "Read filing" to see it directly.</span>';
+        }
+        area.innerHTML = html;
+        area.dataset.plainText = (result.items.map(c => 'Item ' + c + ': ' + (EIGHT_K_ITEMS[c]?.label || 'unknown')).join('; ')) + ' — ' + result.substance.substring(0, 300);
+      };
+    }
+
     return div;
   }
 
@@ -848,12 +999,22 @@
       $('firehose-results').innerHTML = '<div class="empty">No filings returned.</div>';
       return;
     }
+    // Add "Summarize all visible 8-Ks" button if we're on 8-K firehose
+    if (currentFirehoseForm === '8-K' && filings.length > 0) {
+      const bulk = document.createElement('div');
+      bulk.style.cssText = 'margin-bottom:12px;padding:10px 12px;background:var(--bg-info);border-radius:8px;font-size:13px;color:var(--info);';
+      bulk.innerHTML = '<button class="small" id="summarize-all-btn" style="margin-right:10px;">Summarize all ' + Math.min(filings.length, 10) + ' visible 8-Ks</button>' +
+        '<span>Each summary fetches the actual filing — takes ~3 seconds per filing. Stops after 10 to be polite to SEC servers.</span>';
+      $('firehose-results').appendChild(bulk);
+    }
     filings.forEach(f => {
       const meta = classify(f.form);
       f.classification = meta;
       const div = document.createElement('div');
       div.className = 'filing';
       const indexUrl = f.cik ? 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=' + f.cik + '&type=&dateb=&owner=include&count=40' : f.directLink;
+      const isEightK = (f.form || '').toUpperCase().startsWith('8-K');
+      const summarizeBtn = isEightK ? '<button class="small secondary" data-summarize style="margin-top:8px;">Summarize this 8-K</button>' : '';
       div.innerHTML =
         '<div class="filing-head">' +
           '<div>' +
@@ -866,9 +1027,65 @@
           '<a class="filing-link" href="' + f.directLink + '" target="_blank" rel="noopener">Read filing</a>' +
           ' · <a class="filing-link" href="' + indexUrl + '" target="_blank" rel="noopener">Company filings</a>' +
         '</div>' +
-        '<div class="filing-why"><b>Why this matters:</b> ' + meta.why + '</div>';
+        '<div class="filing-why"><b>Why this matters:</b> ' + meta.why + '</div>' +
+        '<div class="summary-area" style="display:none; margin-top:8px; padding:10px 12px; background:var(--bg-soft); border-radius:6px; font-size:12px; line-height:1.55;"></div>' +
+        (summarizeBtn ? '<div>' + summarizeBtn + '</div>' : '');
+      const sumBtn = div.querySelector('[data-summarize]');
+      if (sumBtn) {
+        sumBtn.onclick = async () => {
+          const area = div.querySelector('.summary-area');
+          area.style.display = 'block';
+          area.innerHTML = '<span class="spinner"></span>Fetching filing and parsing items...';
+          sumBtn.disabled = true;
+          const result = await summarize8K(f.directLink);
+          sumBtn.disabled = false;
+          if (!result.ok) {
+            area.innerHTML = '<span style="color:var(--bad);">Could not fetch filing: ' + (result.error || 'unknown') + '. Click "Read filing" above to view it on SEC.gov directly.</span>';
+            return;
+          }
+          let html = '';
+          if (result.items.length > 0) {
+            html += '<div style="margin-bottom:8px;"><b>This 8-K covers:</b></div>';
+            html += '<ul style="margin:0 0 10px;padding-left:18px;">';
+            result.items.forEach(code => {
+              const info = EIGHT_K_ITEMS[code];
+              if (info) {
+                html += '<li style="margin-bottom:4px;"><b>Item ' + code + ' — ' + info.label + '</b><br><span style="color:var(--text-soft);">' + info.why + '</span></li>';
+              } else {
+                html += '<li style="margin-bottom:4px;">Item ' + code + ' (unrecognized — read the filing)</li>';
+              }
+            });
+            html += '</ul>';
+          }
+          if (result.substance) {
+            html += '<div><b>From the filing:</b><br>';
+            html += '<span style="color:var(--text-soft);font-style:italic;">"' + result.substance + (result.substance.length >= 480 ? '..."' : '"') + '</span></div>';
+          }
+          if (!result.items.length && !result.substance) {
+            html += '<span style="color:var(--text-soft);">No standard Item codes or readable substance extracted. The filing may be image-based or have an unusual format. Click "Read filing" to see it directly.</span>';
+          }
+          area.innerHTML = html;
+        };
+      }
       $('firehose-results').appendChild(div);
     });
+    // Wire up the bulk summarize-all button if it exists
+    const bulkBtn = $('summarize-all-btn');
+    if (bulkBtn) {
+      bulkBtn.onclick = async () => {
+        bulkBtn.disabled = true;
+        const allSumBtns = Array.from($('firehose-results').querySelectorAll('[data-summarize]'));
+        const cap = Math.min(allSumBtns.length, 10);
+        bulkBtn.textContent = 'Summarizing... 0 / ' + cap;
+        for (let i = 0; i < cap; i++) {
+          bulkBtn.textContent = 'Summarizing... ' + (i + 1) + ' / ' + cap;
+          allSumBtns[i].click();
+          // Wait for this summary to finish before starting the next (prevents proxy rate limits)
+          await new Promise(r => setTimeout(r, 1500));
+        }
+        bulkBtn.textContent = 'Done — summarized ' + cap + ' filings';
+      };
+    }
   }
 
   // === NOTES MODE ===
