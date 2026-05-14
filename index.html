@@ -586,72 +586,166 @@
   }
 
   // === 8-K SUMMARIZER ===
-  // Fetches the actual filing document and extracts what it says.
-  // For 8-Ks specifically, we extract:
-  //   1. Item codes (gives us specific category)
-  //   2. First paragraph of substance (gives us actual context)
-  //   3. Any press release attached (often the real news)
+  // 8-K filings on SEC.gov are actually directory listings (index pages) pointing to:
+  //   - The 8-K body itself (usually *-8k.htm or named similarly)
+  //   - Exhibit attachments (EX-99.1 press release is where the real news usually is)
+  //   - IXBRL data files (skip)
+  //   - Images (skip)
+  // We need to find the right files, fetch them, and extract substance.
   async function summarize8K(filingUrl) {
-    const result = await fetchViaProxy(filingUrl, false);
-    if (!result.ok) {
-      return { ok: false, error: result.error || 'Could not fetch filing' };
+    // Step 1: Fetch the index/landing page
+    const indexResult = await fetchViaProxy(filingUrl, false);
+    if (!indexResult.ok) {
+      return { ok: false, error: indexResult.error || 'Could not fetch filing index' };
     }
-    const html = result.data;
-    // Strip HTML to plain text
+
     const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    // Remove style, script, head elements
-    doc.querySelectorAll('style, script, head, meta, link').forEach(n => n.remove());
-    let text = doc.body ? doc.body.textContent : doc.documentElement.textContent;
-    text = text.replace(/\s+/g, ' ').replace(/\u00a0/g, ' ').trim();
+    const indexDoc = parser.parseFromString(indexResult.data, 'text/html');
 
-    // Extract Item codes — they appear as "Item X.XX" with various formats
-    const itemMatches = [...text.matchAll(/Item\s+(\d+\.\d+)/gi)];
-    const uniqueItems = [...new Set(itemMatches.map(m => m[1]))];
-
-    // Find the substance — the first meaningful paragraph after "Item X.XX"
-    let substance = '';
-    let leadItem = '';
-    for (const item of uniqueItems) {
-      const itemRegex = new RegExp('Item\\s+' + item.replace('.', '\\.') + '[\\.\\s]*([^\\n]{20,800})', 'i');
-      const match = text.match(itemRegex);
-      if (match && match[1]) {
-        // Clean up — remove the item title prefix, keep the substantive part
-        let chunk = match[1].trim();
-        // Skip past the title of the item (usually a short phrase ending with period)
-        const titleMatch = chunk.match(/^[A-Z][^.]{5,80}\.\s*(.{30,})/);
-        if (titleMatch) chunk = titleMatch[1];
-        substance = chunk.substring(0, 500).trim();
-        if (substance.length > 30) {
-          leadItem = item;
-          break;
+    // Step 2: Find the 8-K body document and the press release exhibit from the index table
+    let bodyUrl = '';
+    let pressReleaseUrl = '';
+    const tables = indexDoc.querySelectorAll('table');
+    for (const tbl of tables) {
+      const rows = tbl.querySelectorAll('tr');
+      for (const row of rows) {
+        const cells = row.querySelectorAll('td');
+        if (cells.length < 4) continue;
+        const description = (cells[1]?.textContent || '').trim();
+        const link = cells[2]?.querySelector('a');
+        const type = (cells[3]?.textContent || '').trim().toUpperCase();
+        if (!link) continue;
+        const href = link.getAttribute('href');
+        if (!href) continue;
+        const fullUrl = href.startsWith('http') ? href : 'https://www.sec.gov' + href;
+        // Skip XBRL, XML, image files
+        if (/\.(xml|xsd|jpg|jpeg|png|gif|js|css)$/i.test(href)) continue;
+        if (href.indexOf('R1.htm') >= 0 || href.indexOf('FilingSummary') >= 0) continue;
+        // The 8-K body is type "8-K" in the table
+        if (!bodyUrl && (type === '8-K' || type === '8-K/A' || type.startsWith('8-K'))) {
+          bodyUrl = fullUrl;
+        }
+        // Press release exhibits are usually EX-99.1, EX-99.2 etc.
+        if (!pressReleaseUrl && (type.startsWith('EX-99') || /ex-?99/i.test(href) || /ex99/i.test(href))) {
+          pressReleaseUrl = fullUrl;
         }
       }
     }
 
-    // If no substance found via Item parsing, try grabbing first 500 chars of body text
-    // (excluding boilerplate)
-    if (!substance) {
-      // Skip past common boilerplate
-      const skipPattern = /(UNITED STATES|SECURITIES AND EXCHANGE|FORM 8-K|CURRENT REPORT|Date of Report|Commission File|Registrant|Exact name|Address of principal|telephone number|Check the appropriate box|Indicate by check mark|Securities registered pursuant)/gi;
-      let cleaned = text.replace(skipPattern, '');
-      cleaned = cleaned.replace(/\s+/g, ' ').trim();
-      // Find first sentence with substance after we get past the header
-      const afterHeader = cleaned.indexOf('Item ');
-      if (afterHeader > 0) {
-        substance = cleaned.substring(afterHeader, afterHeader + 600).trim();
+    // Fallback: if the index URL itself looks like the body document
+    if (!bodyUrl && /\-8k\.htm/i.test(filingUrl)) {
+      bodyUrl = filingUrl;
+    }
+
+    // Step 3: Fetch the body and (if exists) press release
+    const fetches = [];
+    if (bodyUrl) fetches.push(fetchViaProxy(bodyUrl, false));
+    if (pressReleaseUrl) fetches.push(fetchViaProxy(pressReleaseUrl, false));
+
+    if (fetches.length === 0) {
+      return { ok: false, error: 'Could not find 8-K body document in filing index' };
+    }
+
+    const results = await Promise.all(fetches);
+    const bodyText = results[0]?.ok ? extractTextFromHtml(results[0].data) : '';
+    const releaseText = results[1]?.ok ? extractTextFromHtml(results[1].data) : '';
+
+    // Step 4: Extract Item codes from the body
+    const itemMatches = [...bodyText.matchAll(/Item\s+(\d+\.\d+)/gi)];
+    const uniqueItems = [...new Set(itemMatches.map(m => m[1]))];
+
+    // Step 5: Get substance — prefer press release for newsy content
+    let substance = '';
+    let substanceSource = '';
+    if (releaseText && releaseText.length > 200) {
+      substance = extractKeySentences(releaseText, 5);
+      substanceSource = 'press release';
+    } else if (bodyText) {
+      // Get the substance per Item, joining the first meaningful chunks from each Item section
+      const sections = [];
+      for (const item of uniqueItems) {
+        const itemRegex = new RegExp(
+          'Item\\s+' + item.replace('.', '\\.') +
+          '\\.?\\s*([A-Z][^.]{5,200}\\.)?\\s*(.{50,1200}?)(?=Item\\s+\\d+\\.\\d+|SIGNATURES|Pursuant to the requirements)',
+          'is'
+        );
+        const match = bodyText.match(itemRegex);
+        if (match && match[2]) {
+          let chunk = match[2].trim().replace(/\s+/g, ' ');
+          // Trim to first 400 chars
+          if (chunk.length > 400) chunk = chunk.substring(0, 400) + '...';
+          sections.push({ item: item, label: EIGHT_K_ITEMS[item]?.label || item, text: chunk });
+        }
+      }
+      if (sections.length > 0) {
+        substance = sections.map(s => '<b>Item ' + s.item + ' (' + s.label + '):</b> ' + s.text).join('<br><br>');
+        substanceSource = 'filing body';
       } else {
-        substance = cleaned.substring(0, 500).trim();
+        substance = extractKeySentences(bodyText, 4);
+        substanceSource = 'filing body';
       }
     }
 
     return {
       ok: true,
       items: uniqueItems,
-      leadItem: leadItem,
       substance: substance,
+      substanceSource: substanceSource,
+      bodyUrl: bodyUrl,
+      pressReleaseUrl: pressReleaseUrl,
       itemDetails: uniqueItems.map(i => EIGHT_K_ITEMS[i]).filter(x => x)
     };
+  }
+
+  // Helper: extract plain readable text from HTML, stripping boilerplate
+  function extractTextFromHtml(html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    doc.querySelectorAll('style, script, head, meta, link, table[summary*="Document"], table[summary*="Filing"]').forEach(n => n.remove());
+    let text = doc.body ? doc.body.textContent : (doc.documentElement ? doc.documentElement.textContent : '');
+    text = text.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    // Strip very common SEC boilerplate headers
+    text = text.replace(/UNITED STATES SECURITIES AND EXCHANGE COMMISSION[\s\S]{0,400}?Current Report/i, '');
+    text = text.replace(/Pursuant to Section 13 or 15.d. of the Securities Exchange Act of 1934/gi, '');
+    text = text.replace(/Check the appropriate box[\s\S]{0,500}?Title of each class/i, '');
+    text = text.replace(/Indicate by check mark[\s\S]{0,500}/i, ' ');
+    text = text.replace(/Title of each class\s+Trading Symbol\s+Name of each exchange[^.]*\./i, '');
+    text = text.replace(/Emerging growth company[\s\S]{0,200}/i, '');
+    text = text.replace(/If an emerging growth company[\s\S]{0,400}/i, '');
+    text = text.replace(/Securities registered pursuant to Section 12\(b\)[\s\S]{0,400}/i, '');
+    text = text.replace(/\s+/g, ' ').trim();
+    return text;
+  }
+
+  // Helper: pull the most substantive sentences from a text block
+  function extractKeySentences(text, sentenceCount) {
+    // Split by sentence-ending punctuation
+    const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
+    // Score sentences: prefer ones that mention dates, dollar amounts, executive titles, or action verbs
+    const scored = sentences.map(s => {
+      const trimmed = s.trim();
+      let score = 0;
+      // Boost for newsy content
+      if (/\b(announced|reported|entered|appointed|resigned|completed|acquired|will|effective|agreed)\b/i.test(trimmed)) score += 3;
+      if (/\$[\d,]+|[\d,]+\s+shares|million|billion/i.test(trimmed)) score += 2;
+      if (/\b(20\d{2}|January|February|March|April|May|June|July|August|September|October|November|December)\b/i.test(trimmed)) score += 1;
+      if (/\b(CEO|CFO|COO|CTO|President|Director|Officer|Chairman|Board)\b/i.test(trimmed)) score += 2;
+      // Penalize short sentences (probably noise) or very long ones (probably boilerplate)
+      if (trimmed.length < 40) score -= 2;
+      if (trimmed.length > 400) score -= 1;
+      // Penalize boilerplate keywords
+      if (/cautionary statement|forward.looking|risk factors|safe harbor|exhibits attached|incorporated by reference|hereby|herewith/i.test(trimmed)) score -= 3;
+      return { text: trimmed, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    const top = scored.slice(0, sentenceCount).filter(s => s.score > -2);
+    if (top.length === 0) {
+      // Fallback: first few sentences
+      return sentences.slice(0, sentenceCount).map(s => s.trim()).join(' ');
+    }
+    // Re-sort top sentences to their original order so they read naturally
+    const topSet = new Set(top.map(s => s.text));
+    return sentences.filter(s => topSet.has(s.trim())).map(s => s.trim()).join(' ');
   }
 
   // === WATCHLIST MODE ===
@@ -811,14 +905,18 @@
           html += '</ul>';
         }
         if (result.substance) {
-          html += '<div><b>From the filing:</b><br>';
-          html += '<span style="color:var(--text-soft);font-style:italic;">"' + result.substance + (result.substance.length >= 480 ? '..."' : '"') + '</span></div>';
+          const sourceLabel = result.substanceSource === 'press release' ? 'From the press release' : 'From the filing';
+          html += '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border-soft);"><b>' + sourceLabel + ':</b><br>';
+          html += '<div style="color:var(--text-soft);margin-top:6px;">' + result.substance + '</div></div>';
         }
         if (!result.items.length && !result.substance) {
           html += '<span style="color:var(--text-soft);">No standard Item codes or readable substance extracted. The filing may be image-based or have an unusual format. Click "Read filing" to see it directly.</span>';
         }
         area.innerHTML = html;
-        area.dataset.plainText = (result.items.map(c => 'Item ' + c + ': ' + (EIGHT_K_ITEMS[c]?.label || 'unknown')).join('; ')) + ' — ' + result.substance.substring(0, 300);
+        // Plain-text version for notebook saves
+        const itemsList = result.items.map(c => 'Item ' + c + ': ' + (EIGHT_K_ITEMS[c]?.label || 'unknown')).join('; ');
+        const plainSubstance = result.substance.replace(/<[^>]+>/g, '').substring(0, 500);
+        area.dataset.plainText = itemsList + ' — ' + plainSubstance;
       };
     }
 
@@ -1058,8 +1156,9 @@
             html += '</ul>';
           }
           if (result.substance) {
-            html += '<div><b>From the filing:</b><br>';
-            html += '<span style="color:var(--text-soft);font-style:italic;">"' + result.substance + (result.substance.length >= 480 ? '..."' : '"') + '</span></div>';
+            const sourceLabel = result.substanceSource === 'press release' ? 'From the press release' : 'From the filing';
+            html += '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border-soft);"><b>' + sourceLabel + ':</b><br>';
+            html += '<div style="color:var(--text-soft);margin-top:6px;">' + result.substance + '</div></div>';
           }
           if (!result.items.length && !result.substance) {
             html += '<span style="color:var(--text-soft);">No standard Item codes or readable substance extracted. The filing may be image-based or have an unusual format. Click "Read filing" to see it directly.</span>';
