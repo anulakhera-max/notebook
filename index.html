@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The Notebook · Smart Money Intelligence</title>
+<style>
+  :root {
+    --bg: #faf8f3; --bg-card: #ffffff; --bg-soft: #f1efe8; --bg-info: #e6f1fb;
+    --text: #1a1a1a; --text-soft: #5f5e5a; --text-faint: #888780;
+    --border: rgba(0,0,0,0.12); --border-soft: rgba(0,0,0,0.08);
+    --good: #1d9e75; --good-bg: #e1f5ee;
+    --bad: #c0392b; --bad-bg: #fcebeb;
+    --meh: #ba7517; --meh-bg: #faeeda;
+    --info: #185fa5; --info-bg: #e6f1fb;
+    --serif: 'Georgia', 'Times New Roman', serif;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'SF Mono', Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a1a; --bg-card: #262626; --bg-soft: #2c2c2a; --bg-info: #042c53;
+      --text: #f5f5f5; --text-soft: #b4b2a9; --text-faint: #888780;
+      --border: rgba(255,255,255,0.12); --border-soft: rgba(255,255,255,0.08);
+      --good-bg: #04342c; --bad-bg: #501313; --meh-bg: #412402; --info-bg: #042c53;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: var(--sans); background: var(--bg); color: var(--text); margin: 0; padding: 0; line-height: 1.55; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 24px 16px 60px; }
+  .masthead { text-align: center; border-bottom: 2px solid var(--text); padding-bottom: 14px; margin-bottom: 20px; }
+  .masthead-meta { font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--text-soft); margin-bottom: 6px; }
+  .masthead h1 { font-family: var(--serif); font-size: 38px; line-height: 1.05; margin: 0; letter-spacing: -0.5px; font-weight: 500; }
+  .masthead-sub { font-size: 13px; color: var(--text-soft); margin-top: 6px; font-style: italic; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border-soft); margin-bottom: 20px; flex-wrap: wrap; }
+  .tab { padding: 10px 18px; cursor: pointer; font-size: 14px; color: var(--text-soft); border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 500; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--text); }
+  .pane { display: none; }
+  .pane.active { display: block; }
+  .panel { background: var(--bg-soft); border-radius: 12px; padding: 18px 20px; margin-bottom: 18px; }
+  .panel h2 { font-family: var(--serif); font-size: 20px; margin: 0 0 4px; font-weight: 500; }
+  .panel p { font-size: 13px; color: var(--text-soft); margin: 0 0 14px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  input[type="text"], textarea, select {
+    flex: 1; font-family: var(--sans); font-size: 14px;
+    padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg-card); color: var(--text); outline: none;
+    min-width: 180px; height: 40px;
+  }
+  textarea { font-family: var(--mono); font-size: 13px; resize: vertical; min-height: 80px; line-height: 1.5; width: 100%; height: auto; }
+  input[type="text"]:focus, textarea:focus, select:focus { border-color: var(--text); }
+  button {
+    height: 40px; padding: 0 18px;
+    background: var(--text); color: var(--bg-card);
+    border: none; border-radius: 8px; font-size: 14px; font-weight: 500;
+    cursor: pointer; font-family: var(--sans);
+  }
+  button:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.secondary { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); }
+  button.small { height: 32px; padding: 0 12px; font-size: 12px; }
+  button.chip { height: auto; padding: 5px 11px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border-soft); font-size: 13px; }
+  button.chip.active { background: var(--text); color: var(--bg-card); }
+  .status { font-size: 13px; color: var(--text-soft); min-height: 18px; font-style: italic; margin: 10px 0; }
+  .status.err { color: var(--bad); }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .filing { padding: 12px 14px; background: var(--bg-card); border: 1px solid var(--border-soft); border-radius: 8px; margin-bottom: 8px; font-size: 13px; line-height: 1.5; }
+  .filing-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .filing-type { display: inline-block; padding: 3px 9px; font-size: 11px; border-radius: 6px; font-weight: 500; letter-spacing: 0.4px; margin-right: 8px; vertical-align: 1px; }
+  .filing-type.crit { background: var(--bad-bg); color: var(--bad); }
+  .filing-type.imp { background: var(--meh-bg); color: var(--meh); }
+  .filing-type.gold { background: var(--good-bg); color: var(--good); }
+  .filing-type.norm { background: var(--bg-soft); color: var(--text-soft); }
+  .filing-co { font-weight: 500; font-size: 13px; }
+  .filing-co a { color: var(--text); text-decoration: none; }
+  .filing-date { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+  .filing-meta { font-size: 12px; color: var(--text-soft); margin-top: 4px; }
+  .filing-why { font-size: 12px; color: var(--text-soft); margin-top: 6px; font-style: italic; padding-top: 6px; border-top: 1px dashed var(--border-soft); }
+  .filing-why b { color: var(--text); font-style: normal; }
+  details.notebook-entry { background: var(--bg-soft); padding: 10px 14px; border-radius: 8px; margin-bottom: 6px; font-size: 13px; }
+  details.notebook-entry summary { cursor: pointer; font-weight: 500; }
+  details.notebook-entry .note-body { margin-top: 8px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+  .empty { font-size: 13px; color: var(--text-faint); font-style: italic; padding: 14px; text-align: center; }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--text); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .filing-link { font-size: 11px; color: var(--info); text-decoration: none; margin-left: 6px; }
+  .filing-link:hover { text-decoration: underline; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; margin-top: 4px; color: var(--text-soft); }
+  .group-head { font-family: var(--serif); font-size: 17px; margin: 18px 0 8px; padding-top: 8px; border-top: 1px solid var(--border-soft); font-weight: 500; }
+  .group-head:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+  hr.rule { border: 0; border-top: 1px solid var(--border-soft); margin: 16px 0; }
+  .theme-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin: 12px 0; }
+  .theme-card { padding: 12px; background: var(--bg-card); border: 1px solid var(--border-soft); border-radius: 8px; cursor: pointer; font-size: 13px; }
+  .theme-card:hover { border-color: var(--text); }
+  .theme-card-title { font-weight: 500; font-size: 14px; margin-bottom: 4px; }
+  .theme-card-keys { font-size: 11px; color: var(--text-faint); font-family: var(--mono); }
+  .diag { background: var(--bg-info); color: var(--info); padding: 10px 14px; border-radius: 8px; font-size: 12px; margin-bottom: 14px; line-height: 1.5; }
+  .diag.ok { background: var(--good-bg); color: var(--good); }
+  .diag.err { background: var(--bad-bg); color: var(--bad); }
+  .proxy-row { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--text-soft); margin-top: 8px; }
+  .proxy-row select { height: 28px; padding: 0 8px; font-size: 12px; min-width: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="masthead">
+    <div class="masthead-meta">SMART MONEY INTELLIGENCE · POWERED BY SEC EDGAR · FREE FOREVER</div>
+    <h1>The Notebook</h1>
+    <div class="masthead-sub">Read the documents the 3% read. Free, unlimited, no signup.</div>
+  </div>
+
+  <div id="connection-status" class="diag">
+    <span class="spinner"></span>Checking SEC connection...
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-pane="watchlist">Watchlist</div>
+    <div class="tab" data-pane="theme">Theme search</div>
+    <div class="tab" data-pane="firehose">Live firehose</div>
+    <div class="tab" data-pane="notes">Notebook</div>
+    <div class="tab" data-pane="help">How it works</div>
+  </div>
+
+  <!-- ============ WATCHLIST PANE ============ -->
+  <div class="pane active" id="pane-watchlist">
+
+    <div class="panel">
+      <h2>Your watchlist</h2>
+      <p>Companies you're tracking. The tool checks SEC for new filings every time you load.</p>
+      <div class="row">
+        <input type="text" id="add-ticker" placeholder="Add ticker (e.g. PLTR, NVDA, IREN, UAMY)" maxlength="6" style="text-transform: uppercase;" />
+        <button id="add-btn">Add to watchlist</button>
+      </div>
+      <div class="chip-row" id="watchlist-chips"></div>
+      <div class="status" id="wl-status"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Recent filings — last 30 days</h2>
+      <p>All SEC filings from your watchlist. Critical events highlighted.</p>
+      <div class="legend">
+        <span><span class="filing-type crit" style="margin:0;">CRITICAL</span> 8-K events, dilution warning</span>
+        <span><span class="filing-type gold" style="margin:0;">GOLD</span> insider buys, 13D activists</span>
+        <span><span class="filing-type imp" style="margin:0;">IMPORTANT</span> earnings, holdings, proxies</span>
+        <span><span class="filing-type norm" style="margin:0;">ROUTINE</span> other filings</span>
+      </div>
+      <hr class="rule" />
+      <div id="watchlist-filings">
+        <div class="empty">Add tickers above to see filings.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ THEME PANE ============ -->
+  <div class="pane" id="pane-theme">
+    <div class="panel">
+      <h2>Pre-built themes</h2>
+      <p>Click any theme to find every SEC filing across all US public companies mentioning these keywords in the last 30 days.</p>
+      <div class="theme-grid" id="theme-cards"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Custom keyword search</h2>
+      <p>Enter your own keywords. Quotes for exact phrase. Searches the full text of every SEC filing.</p>
+      <div class="row">
+        <input type="text" id="theme-query" placeholder='e.g. "rare earth" or antimony, indium phosphide' />
+        <button id="theme-search-btn">Search filings</button>
+      </div>
+      <div class="row" style="margin-top: 8px;">
+        <select id="theme-forms">
+          <option value="">All forms</option>
+          <option value="8-K">8-K (material events)</option>
+          <option value="10-Q,10-K">10-Q, 10-K (earnings)</option>
+          <option value="SC 13D,SC 13G">13D, 13G (activist)</option>
+          <option value="DEF 14A">DEF 14A (proxy)</option>
+          <option value="S-1,S-3">S-1, S-3 (share offerings)</option>
+          <option value="4">Form 4 (insider trades)</option>
+        </select>
+        <select id="theme-days">
+          <option value="7">Last 7 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="180">Last 6 months</option>
+        </select>
+      </div>
+      <div class="status" id="theme-status"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Search results</h2>
+      <p>Filings containing your keywords. Click company name to see the full filing.</p>
+      <div id="theme-results">
+        <div class="empty">Pick a theme above, or run a custom search.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ FIREHOSE PANE ============ -->
+  <div class="pane" id="pane-firehose">
+    <div class="panel">
+      <h2>The live firehose</h2>
+      <p>Every filing of a specific type, in real time, across all US public companies. This is what hedge fund analysts watch all day.</p>
+      <div class="chip-row">
+        <button class="chip active" data-form="8-K">8-K events</button>
+        <button class="chip" data-form="4">Form 4 insider trades</button>
+        <button class="chip" data-form="SC 13D">13D activist positions</button>
+        <button class="chip" data-form="SC 13G">13G large positions</button>
+        <button class="chip" data-form="S-3">S-3 share offerings</button>
+        <button class="chip" data-form="DEF 14A">Proxy statements</button>
+      </div>
+      <div class="status" id="firehose-status"></div>
+    </div>
+
+    <div class="panel">
+      <h2 id="firehose-title">Latest 8-K events</h2>
+      <p>Sorted newest first. Click a company to see the full filing on SEC.gov.</p>
+      <div id="firehose-results">
+        <div class="empty">Pick a filing type above.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ NOTES PANE ============ -->
+  <div class="pane" id="pane-notes">
+    <div class="panel">
+      <h2>Save important findings</h2>
+      <p>Click "Save to notebook" on any filing to keep it here. Add your own observations.</p>
+      <textarea id="new-note" placeholder="Write a quick observation — what theme, why it matters, what to watch next..." rows="3"></textarea>
+      <div class="row" style="margin-top: 8px;">
+        <input type="text" id="new-note-title" placeholder="Note title (e.g. 'IREN convert dilution risk')" />
+        <button id="add-note-btn">Save note</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Your notebook</h2>
+      <p>Everything you've saved. Click to expand. Export for backup.</p>
+      <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+        <button id="export-notes" class="secondary small">Export to text file</button>
+        <button id="clear-notes" class="secondary small">Clear all</button>
+      </div>
+      <div id="notes-list">
+        <div class="empty">No notes saved yet.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ HELP PANE ============ -->
+  <div class="pane" id="pane-help">
+    <div class="panel">
+      <h2>What this tool does</h2>
+      <p>It reads the documents that smart money reads — SEC filings — and surfaces what matters.</p>
+      <div style="font-size: 14px; line-height: 1.7;">
+        <p><b>What "smart money" actually does:</b> They don't watch stock prices. They read filings. Every US public company files documents with the SEC. Those documents tell you what hedge funds bought (13F), what activists are doing (13D), what insiders are trading (Form 4), and what events happened that the company must disclose (8-K).</p>
+        <p><b>Why this is free:</b> The SEC's EDGAR system is funded by taxpayers and is required by law to be publicly accessible. Bloomberg charges $24,000 a year to wrap a fancy UI around this data. We just go to the source.</p>
+        <p><b>How to use the three modes:</b></p>
+        <ul>
+          <li><b>Watchlist:</b> Add stocks you care about. See every filing they make, with critical events flagged.</li>
+          <li><b>Theme search:</b> Search the text inside all filings for keywords.</li>
+          <li><b>Live firehose:</b> See every filing of a specific type as it happens.</li>
+        </ul>
+        <p><b>About CORS proxies:</b> The SEC's data API blocks browser-direct access for performance reasons. We route requests through a free CORS proxy. If one proxy is slow, the dropdown at the top lets you switch.</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Filing type cheat sheet</h2>
+      <div style="font-size: 13px; line-height: 1.7;">
+        <p><b style="color: var(--bad);">8-K</b> — Material event. Required within 4 business days when something important happens. <b>Always read these.</b></p>
+        <p><b style="color: var(--good);">SC 13D</b> — A new investor accumulated more than 5% with intent to influence. Often activists. Loud bullish signal.</p>
+        <p><b style="color: var(--good);">SC 13G</b> — Same 5% threshold but passive. Less loud but worth noting.</p>
+        <p><b style="color: var(--good);">Form 4</b> — Insider bought or sold their own stock. Buys with own money are the cleanest bullish signal in finance.</p>
+        <p><b style="color: var(--meh);">13F-HR</b> — Institutional manager's quarterly holdings list. 45-day delayed.</p>
+        <p><b style="color: var(--meh);">10-Q / 10-K</b> — Quarterly / annual financial reports.</p>
+        <p><b style="color: var(--bad);">S-3 / 424B</b> — Company selling new shares. Usually dilutive.</p>
+        <p><b style="color: var(--meh);">DEF 14A</b> — Proxy statement before annual meeting.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function() {
+  const $ = (id) => document.getElementById(id);
+
+  // === EMBEDDED CIK FALLBACK ===
+  // Top US-listed companies that users are most likely to look up.
+  // Embedded so the tool works instantly without network call for common tickers.
+  const EMBEDDED_CIKS = {
+    'AAPL': { cik: '0000320193', name: 'Apple Inc.' },
+    'MSFT': { cik: '0000789019', name: 'Microsoft Corporation' },
+    'NVDA': { cik: '0001045810', name: 'NVIDIA Corporation' },
+    'GOOGL': { cik: '0001652044', name: 'Alphabet Inc.' },
+    'GOOG': { cik: '0001652044', name: 'Alphabet Inc.' },
+    'AMZN': { cik: '0001018724', name: 'Amazon.com, Inc.' },
+    'META': { cik: '0001326801', name: 'Meta Platforms, Inc.' },
+    'TSLA': { cik: '0001318605', name: 'Tesla, Inc.' },
+    'PLTR': { cik: '0001321655', name: 'Palantir Technologies Inc.' },
+    'AMD': { cik: '0000002488', name: 'Advanced Micro Devices, Inc.' },
+    'INTC': { cik: '0000050863', name: 'Intel Corporation' },
+    'AVGO': { cik: '0001730168', name: 'Broadcom Inc.' },
+    'ORCL': { cik: '0001341439', name: 'Oracle Corporation' },
+    'CRM': { cik: '0001108524', name: 'Salesforce, Inc.' },
+    'NFLX': { cik: '0001065280', name: 'Netflix, Inc.' },
+    'ADBE': { cik: '0000796343', name: 'Adobe Inc.' },
+    'PYPL': { cik: '0001633917', name: 'PayPal Holdings, Inc.' },
+    'COIN': { cik: '0001679788', name: 'Coinbase Global, Inc.' },
+    'MSTR': { cik: '0001050446', name: 'MicroStrategy Incorporated' },
+    'IREN': { cik: '0001830033', name: 'IRIS Energy Limited' },
+    'UAMY': { cik: '0000820736', name: 'United States Antimony Corporation' },
+    'MP':   { cik: '0001801368', name: 'MP Materials Corp.' },
+    'UUUU': { cik: '0001385849', name: 'Energy Fuels Inc' },
+    'IDR':  { cik: '0001847584', name: 'Idaho Strategic Resources, Inc.' },
+    'LSCC': { cik: '0000855658', name: 'Lattice Semiconductor Corporation' },
+    'ILMN': { cik: '0001110803', name: 'Illumina, Inc.' },
+    'RCAT': { cik: '0001687919', name: 'Red Cat Holdings, Inc.' },
+    'LASR': { cik: '0001124796', name: 'nLight, Inc.' },
+    'COHR': { cik: '0000820318', name: 'Coherent Corp.' },
+    'AVAV': { cik: '0001368622', name: 'AeroVironment, Inc.' },
+    'KTOS': { cik: '0001069258', name: 'Kratos Defense & Security Solutions, Inc.' },
+    'LMT':  { cik: '0000936468', name: 'Lockheed Martin Corporation' },
+    'NOC':  { cik: '0001133421', name: 'Northrop Grumman Corp' },
+    'RTX':  { cik: '0000101829', name: 'RTX Corporation' },
+    'GD':   { cik: '0000040533', name: 'General Dynamics Corporation' },
+    'BA':   { cik: '0000012927', name: 'The Boeing Company' },
+    'NVX':  { cik: '0001859285', name: 'NOVONIX Limited' },
+    'POET': { cik: '0001110621', name: 'POET Technologies Inc.' },
+    'LWLG': { cik: '0001302773', name: 'Lightwave Logic, Inc.' },
+    'AAOI': { cik: '0001158114', name: 'Applied Optoelectronics, Inc.' },
+    'MTSI': { cik: '0001493594', name: 'MACOM Technology Solutions Holdings, Inc.' },
+    'BBAI': { cik: '0001836764', name: 'BigBear.ai Holdings, Inc.' },
+    'DPRO': { cik: '0001638911', name: 'Draganfly Inc.' },
+    'ONDS': { cik: '0001646188', name: 'Ondas Holdings Inc.' },
+    'BTBT': { cik: '0001710350', name: 'Bit Digital, Inc.' },
+    'CIFR': { cik: '0001819989', name: 'Cipher Mining Inc.' },
+    'WULF': { cik: '0001083301', name: 'TeraWulf Inc.' },
+    'CRWV': { cik: '0001769628', name: 'CoreWeave, Inc.' },
+    'SMCI': { cik: '0001375365', name: 'Super Micro Computer, Inc.' },
+    'ANET': { cik: '0001596532', name: 'Arista Networks, Inc.' },
+    'CRWD': { cik: '0001535527', name: 'CrowdStrike Holdings, Inc.' },
+    'SNOW': { cik: '0001640147', name: 'Snowflake Inc.' },
+    'DDOG': { cik: '0001561550', name: 'Datadog, Inc.' },
+    'NET':  { cik: '0001477333', name: 'Cloudflare, Inc.' },
+    'SHOP': { cik: '0001594805', name: 'Shopify Inc.' },
+    'SQ':   { cik: '0001512673', name: 'Block, Inc.' },
+    'AFRM': { cik: '0001820302', name: 'Affirm Holdings, Inc.' },
+    'RBLX': { cik: '0001315098', name: 'Roblox Corporation' },
+    'U':    { cik: '0001810806', name: 'Unity Software Inc.' },
+    'GME':  { cik: '0001326380', name: 'GameStop Corp.' },
+    'AMC':  { cik: '0001411579', name: 'AMC Entertainment Holdings, Inc.' },
+    'BABA': { cik: '0001577552', name: 'Alibaba Group Holding Limited' },
+    'JD':   { cik: '0001549802', name: 'JD.com, Inc.' },
+    'NIO':  { cik: '0001736541', name: 'NIO Inc.' },
+    'XPEV': { cik: '0001821806', name: 'XPeng Inc.' },
+    'TSM':  { cik: '0001046179', name: 'Taiwan Semiconductor Manufacturing Company Limited' },
+    'ASML': { cik: '0000937966', name: 'ASML Holding N.V.' },
+    'JPM':  { cik: '0000019617', name: 'JPMorgan Chase & Co.' },
+    'BAC':  { cik: '0000070858', name: 'Bank of America Corporation' },
+    'WFC':  { cik: '0000072971', name: 'Wells Fargo & Company' },
+    'GS':   { cik: '0000886982', name: 'The Goldman Sachs Group, Inc.' },
+    'MS':   { cik: '0000895421', name: 'Morgan Stanley' },
+    'BRK.B':{ cik: '0001067983', name: 'Berkshire Hathaway Inc.' },
+    'XOM':  { cik: '0000034088', name: 'Exxon Mobil Corporation' },
+    'CVX':  { cik: '0000093410', name: 'Chevron Corporation' },
+    'JNJ':  { cik: '0000200406', name: 'Johnson & Johnson' },
+    'PFE':  { cik: '0000078003', name: 'Pfizer Inc.' },
+    'MRK':  { cik: '0000310158', name: 'Merck & Co., Inc.' },
+    'UNH':  { cik: '0000731766', name: 'UnitedHealth Group Incorporated' },
+    'LLY':  { cik: '0000059478', name: 'Eli Lilly and Company' },
+    'WMT':  { cik: '0000104169', name: 'Walmart Inc.' },
+    'HD':   { cik: '0000354950', name: 'The Home Depot, Inc.' },
+    'DIS':  { cik: '0001744489', name: 'The Walt Disney Company' },
+    'KO':   { cik: '0000021344', name: 'The Coca-Cola Company' },
+    'PEP':  { cik: '0000077476', name: 'PepsiCo, Inc.' },
+    'NKE':  { cik: '0000320187', name: 'NIKE, Inc.' },
+    'MCD':  { cik: '0000063908', name: "McDonald's Corporation" },
+    'V':    { cik: '0001403161', name: 'Visa Inc.' },
+    'MA':   { cik: '0001141391', name: 'Mastercard Incorporated' },
+    'ABBV': { cik: '0001551152', name: 'AbbVie Inc.' },
+    'TMO':  { cik: '0000097745', name: 'Thermo Fisher Scientific Inc.' },
+    'DHR':  { cik: '0000313616', name: 'Danaher Corporation' },
+    'COST': { cik: '0000909832', name: 'Costco Wholesale Corporation' },
+    'CSCO': { cik: '0000858877', name: 'Cisco Systems, Inc.' },
+    'IBM':  { cik: '0000051143', name: 'International Business Machines Corporation' },
+    'T':    { cik: '0000732717', name: 'AT&T Inc.' },
+    'VZ':   { cik: '0000732712', name: 'Verizon Communications Inc.' },
+    'F':    { cik: '0000037996', name: 'Ford Motor Company' },
+    'GM':   { cik: '0001467858', name: 'General Motors Company' },
+    'UBER': { cik: '0001543151', name: 'Uber Technologies, Inc.' },
+    'LYFT': { cik: '0001759509', name: 'Lyft, Inc.' },
+    'ABNB': { cik: '0001559720', name: 'Airbnb, Inc.' },
+    'SPOT': { cik: '0001639920', name: 'Spotify Technology S.A.' },
+    'DASH': { cik: '0001792789', name: 'DoorDash, Inc.' },
+    'RDDT': { cik: '0001713445', name: 'Reddit, Inc.' },
+    'HOOD': { cik: '0001783879', name: 'Robinhood Markets, Inc.' },
+    'SOFI': { cik: '0001818874', name: 'SoFi Technologies, Inc.' },
+    'PACB': { cik: '0001299130', name: 'Pacific Biosciences of California, Inc.' },
+    'KRKNF':{ cik: '0001763329', name: 'Kraken Robotics Inc.' }
+  };
+
+  // === CORS PROXIES (with fallback chain) ===
+  // Try direct first when on HTTPS (some SEC endpoints work cross-origin from hosted pages).
+  // Then fall through to multiple CORS proxies.
+  const isHosted = window.location.protocol === 'https:' || window.location.protocol === 'http:';
+  const PROXIES = isHosted ? [
+    { name: 'direct', wrap: (u) => u },
+    { name: 'corsproxy.io', wrap: (u) => 'https://corsproxy.io/?' + encodeURIComponent(u) },
+    { name: 'allorigins.win', wrap: (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) },
+    { name: 'codetabs.com', wrap: (u) => 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(u) }
+  ] : [
+    { name: 'corsproxy.io', wrap: (u) => 'https://corsproxy.io/?' + encodeURIComponent(u) },
+    { name: 'allorigins.win', wrap: (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) },
+    { name: 'codetabs.com', wrap: (u) => 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(u) },
+    { name: 'direct', wrap: (u) => u }
+  ];
+  let activeProxyIdx = 0;
+
+  async function fetchViaProxy(url, isJson) {
+    let lastErr = null;
+    for (let i = 0; i < PROXIES.length; i++) {
+      const idx = (activeProxyIdx + i) % PROXIES.length;
+      const proxy = PROXIES[idx];
+      try {
+        const r = await fetch(proxy.wrap(url));
+        if (!r.ok) { lastErr = 'HTTP ' + r.status; continue; }
+        if (isJson) {
+          const data = await r.json();
+          activeProxyIdx = idx;
+          return { ok: true, data, via: proxy.name };
+        } else {
+          const text = await r.text();
+          if (text.length < 50) { lastErr = 'empty response'; continue; }
+          activeProxyIdx = idx;
+          return { ok: true, data: text, via: proxy.name };
+        }
+      } catch(e) {
+        lastErr = e.message;
+      }
+    }
+    return { ok: false, error: lastErr };
+  }
+
+  // === STORAGE ===
+  const WATCHLIST_KEY = 'tn_watchlist';
+  const NOTES_KEY = 'tn_notes';
+  const CIK_CACHE_KEY = 'tn_cik_cache_v2';
+
+  function getWatchlist() { try { return JSON.parse(localStorage.getItem(WATCHLIST_KEY) || '[]'); } catch(e) { return []; } }
+  function saveWatchlist(list) { localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list)); }
+  function getNotes() { try { return JSON.parse(localStorage.getItem(NOTES_KEY) || '[]'); } catch(e) { return []; } }
+  function saveNotes(notes) { localStorage.setItem(NOTES_KEY, JSON.stringify(notes)); }
+  function getCikCache() { try { return JSON.parse(localStorage.getItem(CIK_CACHE_KEY) || '{}'); } catch(e) { return {}; } }
+  function saveCikCache(cache) { localStorage.setItem(CIK_CACHE_KEY, JSON.stringify(cache)); }
+
+  // === TAB SWITCHING ===
+  document.querySelectorAll('.tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.pane').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      $('pane-' + t.dataset.pane).classList.add('active');
+    });
+  });
+
+  // === CIK LOOKUP ===
+  let tickerMap = null;
+
+  async function loadTickerMap() {
+    if (tickerMap) return tickerMap;
+    const result = await fetchViaProxy('https://www.sec.gov/files/company_tickers.json', true);
+    if (!result.ok) return null;
+    tickerMap = {};
+    const data = result.data;
+    for (const k in data) {
+      if (data[k] && data[k].ticker) {
+        tickerMap[data[k].ticker.toUpperCase()] = {
+          cik: String(data[k].cik_str).padStart(10, '0'),
+          name: data[k].title
+        };
+      }
+    }
+    return tickerMap;
+  }
+
+  async function getCIK(ticker) {
+    const upper = ticker.toUpperCase();
+    // Layer 1: embedded map (instant, no network)
+    if (EMBEDDED_CIKS[upper]) return EMBEDDED_CIKS[upper];
+    // Layer 2: localStorage cache (instant, from prior lookups)
+    const cache = getCikCache();
+    if (cache[upper]) return cache[upper];
+    // Layer 3: SEC ticker map (network, ~1-3 seconds, ~10K companies)
+    const map = await loadTickerMap();
+    if (map && map[upper]) {
+      cache[upper] = map[upper];
+      saveCikCache(cache);
+      return map[upper];
+    }
+    return null;
+  }
+
+  // === CONNECTION TEST ===
+  async function testConnection() {
+    $('connection-status').className = 'diag';
+    $('connection-status').innerHTML = '<span class="spinner"></span>Testing SEC connection...';
+    const r = await fetchViaProxy('https://www.sec.gov/files/company_tickers.json', true);
+    if (r.ok) {
+      $('connection-status').className = 'diag ok';
+      $('connection-status').innerHTML = '✓ Connected via ' + r.via + '. Full SEC EDGAR access ready. ' +
+        Object.keys(r.data || {}).length + ' tickers loaded.';
+    } else {
+      $('connection-status').className = 'diag err';
+      $('connection-status').innerHTML = '⚠ All proxies failed. Common tickers still work from the embedded list (' +
+        Object.keys(EMBEDDED_CIKS).length + ' companies). If a specific ticker is missing, paste its CIK manually. Error: ' + (r.error || 'unknown');
+    }
+  }
+
+  // === FILING METADATA ===
+  function classify(formType) {
+    const t = (formType || '').toUpperCase();
+    if (t === '8-K' || t === '8-K/A') return { cls: 'crit', label: 'CRITICAL', why: 'Material event the company is legally required to disclose within 4 business days. Could be earnings preview, executive change, acquisition, lawsuit, or material agreement.' };
+    if (t === '4' || t === '4/A') return { cls: 'gold', label: 'INSIDER', why: 'An insider traded their own company stock. Open-market buys with personal money are the strongest single bullish signal in finance.' };
+    if (t.startsWith('SC 13D')) return { cls: 'gold', label: 'ACTIVIST', why: 'A new investor crossed the 5% ownership threshold with intent to influence the company. Loud bullish signal.' };
+    if (t.startsWith('SC 13G')) return { cls: 'gold', label: 'LARGE STAKE', why: 'A passive investor crossed 5% ownership. Less loud than 13D but signals institutional comfort.' };
+    if (t === 'S-3' || t === 'S-3/A' || t.startsWith('424B')) return { cls: 'crit', label: 'DILUTION', why: 'Company is registering or selling new shares. Usually dilutes existing shareholders.' };
+    if (t === 'S-1' || t === 'S-1/A') return { cls: 'imp', label: 'IPO/REG', why: 'Initial registration for a new share sale or IPO.' };
+    if (t === '10-Q' || t === '10-Q/A') return { cls: 'imp', label: 'QUARTERLY', why: 'Full quarterly financial report. The footnotes often reveal what management does not want to emphasize.' };
+    if (t === '10-K' || t === '10-K/A') return { cls: 'imp', label: 'ANNUAL', why: 'Annual report. The risk factors section is where companies legally must disclose threats.' };
+    if (t === 'DEF 14A' || t === 'DEFA14A') return { cls: 'imp', label: 'PROXY', why: 'Proxy statement before the annual meeting. Contains executive compensation and major votes.' };
+    if (t.startsWith('13F')) return { cls: 'imp', label: 'INSTITUTIONAL', why: 'Quarterly disclosure of holdings by an institutional manager. 45-day delayed.' };
+    if (t === '6-K') return { cls: 'imp', label: 'FOREIGN', why: 'Material event disclosure from a foreign company.' };
+    return { cls: 'norm', label: t.toUpperCase(), why: 'Routine filing.' };
+  }
+
+  function filingDocUrl(cik, accession, primaryDoc) {
+    const accNoDashes = accession.replace(/-/g, '');
+    if (primaryDoc) {
+      return 'https://www.sec.gov/Archives/edgar/data/' + parseInt(cik, 10) + '/' + accNoDashes + '/' + primaryDoc;
+    }
+    return 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=' + cik + '&type=&dateb=&owner=include&count=40';
+  }
+
+  function daysSince(dateStr) {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return 9999;
+    return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
+  }
+
+  // === WATCHLIST MODE ===
+  async function renderWatchlist() {
+    const list = getWatchlist();
+    const chipsC = $('watchlist-chips');
+    chipsC.innerHTML = '';
+    if (list.length === 0) {
+      chipsC.innerHTML = '<span style="font-size:12px;color:var(--text-faint);font-style:italic;">Empty. Add tickers above.</span>';
+      $('watchlist-filings').innerHTML = '<div class="empty">Add tickers above to see filings.</div>';
+      return;
+    }
+    list.forEach(item => {
+      const chip = document.createElement('button');
+      chip.className = 'chip';
+      chip.innerHTML = item.ticker + ' <span style="opacity:0.6;margin-left:4px;">×</span>';
+      chip.title = item.name;
+      chip.onclick = (e) => {
+        if (e.offsetX > chip.offsetWidth - 24) {
+          const updated = getWatchlist().filter(x => x.ticker !== item.ticker);
+          saveWatchlist(updated);
+          renderWatchlist();
+        }
+      };
+      chipsC.appendChild(chip);
+    });
+    loadWatchlistFilings();
+  }
+
+  async function loadWatchlistFilings() {
+    const list = getWatchlist();
+    if (list.length === 0) return;
+    $('wl-status').innerHTML = '<span class="spinner"></span>Loading filings for ' + list.length + ' companies...';
+    const allFilings = [];
+    let failures = 0;
+    for (const item of list) {
+      try {
+        const result = await fetchViaProxy('https://data.sec.gov/submissions/CIK' + item.cik + '.json', true);
+        if (!result.ok) { failures++; continue; }
+        const data = result.data;
+        if (!data.filings || !data.filings.recent) continue;
+        const rec = data.filings.recent;
+        for (let i = 0; i < rec.form.length && i < 40; i++) {
+          const days = daysSince(rec.filingDate[i]);
+          if (days > 30) continue;
+          allFilings.push({
+            ticker: item.ticker,
+            company: item.name,
+            cik: item.cik,
+            form: rec.form[i],
+            filingDate: rec.filingDate[i],
+            accession: rec.accessionNumber[i],
+            primaryDoc: rec.primaryDocument[i],
+            primaryDesc: rec.primaryDocDescription[i],
+            days: days
+          });
+        }
+      } catch(e) { failures++; }
+    }
+    allFilings.sort((a, b) => new Date(b.filingDate) - new Date(a.filingDate));
+    renderFilings(allFilings, $('watchlist-filings'), 'No filings in the last 30 days for any watchlist ticker.');
+    let msg = 'Found ' + allFilings.length + ' filings in last 30 days';
+    if (failures > 0) msg += ' (' + failures + ' tickers failed to load)';
+    msg += '.';
+    $('wl-status').textContent = msg;
+  }
+
+  function renderFilings(filings, container, emptyMsg) {
+    container.innerHTML = '';
+    if (filings.length === 0) {
+      container.innerHTML = '<div class="empty">' + (emptyMsg || 'No filings found.') + '</div>';
+      return;
+    }
+    const groups = { gold: [], crit: [], imp: [], norm: [] };
+    filings.forEach(f => {
+      const meta = classify(f.form);
+      f.classification = meta;
+      groups[meta.cls].push(f);
+    });
+    const order = [['gold', 'Gold signals — insider buys, activists'],
+                   ['crit', 'Critical events — 8-K material disclosures, dilution'],
+                   ['imp',  'Important — earnings, holdings, proxies'],
+                   ['norm', 'Routine filings']];
+    order.forEach(([key, label]) => {
+      if (groups[key].length === 0) return;
+      const head = document.createElement('div');
+      head.className = 'group-head';
+      head.textContent = label + ' (' + groups[key].length + ')';
+      container.appendChild(head);
+      groups[key].forEach(f => container.appendChild(buildFilingCard(f)));
+    });
+  }
+
+  function buildFilingCard(f) {
+    const div = document.createElement('div');
+    div.className = 'filing';
+    const docUrl = filingDocUrl(f.cik, f.accession, f.primaryDoc);
+    const indexUrl = 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=' + f.cik + '&type=' + encodeURIComponent(f.form) + '&dateb=&owner=include&count=10';
+    div.innerHTML =
+      '<div class="filing-head">' +
+        '<div>' +
+          '<span class="filing-type ' + f.classification.cls + '">' + f.classification.label + ' · ' + f.form + '</span>' +
+          '<span class="filing-co">' + (f.ticker ? '<b>' + f.ticker + '</b> · ' : '') + f.company + '</span>' +
+        '</div>' +
+        '<div class="filing-date">' + f.filingDate + ' (' + f.days + 'd ago)</div>' +
+      '</div>' +
+      '<div class="filing-meta">' + (f.primaryDesc || 'Filing document') +
+        ' · <a class="filing-link" href="' + docUrl + '" target="_blank" rel="noopener">Read filing</a>' +
+        ' · <a class="filing-link" href="' + indexUrl + '" target="_blank" rel="noopener">All ' + f.form + ' for this company</a>' +
+      '</div>' +
+      '<div class="filing-why"><b>Why this matters:</b> ' + f.classification.why + '</div>' +
+      '<div style="margin-top:8px;"><button class="small secondary" data-save-filing>Save to notebook</button></div>';
+    div.querySelector('[data-save-filing]').onclick = () => {
+      const notes = getNotes();
+      notes.unshift({
+        id: Date.now(),
+        title: f.form + ' · ' + (f.ticker || f.company),
+        body: f.classification.label + ' — ' + (f.primaryDesc || '') + '\n\nDocument: ' + docUrl + '\n\nWhy: ' + f.classification.why,
+        saved: new Date().toISOString()
+      });
+      saveNotes(notes);
+      renderNotes();
+      alert('Saved to notebook.');
+    };
+    return div;
+  }
+
+  $('add-btn').onclick = async () => {
+    const t = $('add-ticker').value.trim().toUpperCase();
+    if (!t || !/^[A-Z.\-]{1,6}$/.test(t)) { 
+      $('wl-status').textContent = 'Invalid ticker format.';
+      $('wl-status').className = 'status err';
+      return; 
+    }
+    $('wl-status').innerHTML = '<span class="spinner"></span>Looking up ' + t + '...';
+    $('wl-status').className = 'status';
+    const cikInfo = await getCIK(t);
+    if (!cikInfo) {
+      $('wl-status').textContent = 'Ticker ' + t + ' not found. Either it is not US-listed, the SEC connection failed, or it is a very recent IPO. Check spelling.';
+      $('wl-status').className = 'status err';
+      return;
+    }
+    const list = getWatchlist();
+    if (list.find(x => x.ticker === t)) {
+      $('wl-status').textContent = t + ' already in watchlist.';
+      return;
+    }
+    list.push({ ticker: t, cik: cikInfo.cik, name: cikInfo.name });
+    saveWatchlist(list);
+    $('add-ticker').value = '';
+    $('wl-status').textContent = 'Added ' + t + ' (' + cikInfo.name + ').';
+    renderWatchlist();
+  };
+  $('add-ticker').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('add-btn').click(); });
+
+  // === THEME MODE ===
+  const PRESET_THEMES = [
+    { name: 'China rare earth supply', keys: '"rare earth elements" OR "rare earths" OR neodymium OR dysprosium' },
+    { name: 'Antimony & critical minerals', keys: 'antimony OR "critical minerals" OR tungsten OR gallium OR germanium' },
+    { name: 'Indium phosphide / photonics', keys: '"indium phosphide" OR "InP" OR photonic OR "optical compute"' },
+    { name: 'AI infrastructure buildout', keys: '"AI infrastructure" OR "GPU cluster" OR "compute capacity"' },
+    { name: 'Bitcoin mining + AI pivot', keys: '"bitcoin mining" AND ("AI" OR "high performance compute" OR HPC)' },
+    { name: 'Defense drones & counter-UAS', keys: '"counter-UAS" OR "counter drone" OR "small UAS" OR loitering' },
+    { name: 'Subsea & maritime defense', keys: 'sonar OR subsea OR undersea OR "maritime domain"' },
+    { name: 'CRISPR & gene editing', keys: 'CRISPR OR "gene editing" OR "base editing"' },
+    { name: 'Quantum computing', keys: '"quantum computer" OR qubit OR "quantum advantage"' },
+    { name: 'Nuclear & SMR', keys: '"small modular reactor" OR SMR OR "advanced reactor"' },
+    { name: 'Lithium battery supply', keys: 'lithium AND (supply OR offtake OR mining OR refining)' },
+    { name: 'Reshoring / Made in America', keys: 'reshoring OR onshoring OR "domestic manufacturing"' },
+  ];
+
+  function renderThemeCards() {
+    const c = $('theme-cards');
+    c.innerHTML = '';
+    PRESET_THEMES.forEach(theme => {
+      const div = document.createElement('div');
+      div.className = 'theme-card';
+      div.innerHTML = '<div class="theme-card-title">' + theme.name + '</div>' +
+                      '<div class="theme-card-keys">' + theme.keys + '</div>';
+      div.onclick = () => {
+        $('theme-query').value = theme.keys;
+        runThemeSearch();
+      };
+      c.appendChild(div);
+    });
+  }
+
+  async function runThemeSearch() {
+    const q = $('theme-query').value.trim();
+    if (!q) { $('theme-status').textContent = 'Enter keywords first.'; return; }
+    const forms = $('theme-forms').value;
+    const days = parseInt($('theme-days').value);
+    const dateFrom = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const dateTo = new Date();
+    const fromStr = dateFrom.toISOString().split('T')[0];
+    const toStr = dateTo.toISOString().split('T')[0];
+
+    $('theme-status').innerHTML = '<span class="spinner"></span>Searching SEC EDGAR full text...';
+    $('theme-results').innerHTML = '<div class="empty"><span class="spinner"></span>Searching all US public company filings...</div>';
+
+    let url = 'https://efts.sec.gov/LATEST/search-index?q=' + encodeURIComponent(q) +
+              '&dateRange=custom&startdt=' + fromStr + '&enddt=' + toStr;
+    if (forms) url += '&forms=' + encodeURIComponent(forms);
+
+    const result = await fetchViaProxy(url, true);
+    if (!result.ok) {
+      $('theme-status').textContent = 'SEC search failed: ' + (result.error || 'unknown error') + '. Try simpler keywords.';
+      $('theme-status').className = 'status err';
+      $('theme-results').innerHTML = '<div class="empty">Search failed.</div>';
+      return;
+    }
+    const data = result.data;
+    if (!data.hits || !data.hits.hits || data.hits.hits.length === 0) {
+      $('theme-status').textContent = 'No results.';
+      $('theme-status').className = 'status';
+      $('theme-results').innerHTML = '<div class="empty">No filings found with these keywords in this time range.</div>';
+      return;
+    }
+    const hits = data.hits.hits;
+    $('theme-status').textContent = 'Found ' + (data.hits.total?.value || hits.length) + ' filings. Showing top ' + hits.length + '.';
+    $('theme-status').className = 'status';
+    const filings = hits.map(h => {
+      const src = h._source;
+      const idParts = (h._id || '').split(':');
+      const adsh = idParts[0];
+      const fileName = idParts[1] || '';
+      const cikRaw = src.ciks?.[0] || '';
+      const cik = String(cikRaw).padStart(10, '0');
+      return {
+        ticker: src.tickers?.[0] || '',
+        company: src.display_names?.[0]?.replace(/\s*\(.*\)\s*$/, '') || 'Unknown',
+        cik: cik,
+        form: src.form || '',
+        filingDate: src.file_date || '',
+        accession: adsh,
+        primaryDoc: fileName,
+        primaryDesc: src.file_description || src.file_type || 'Filing',
+        days: daysSince(src.file_date)
+      };
+    });
+    renderFilings(filings, $('theme-results'), 'No filings matched.');
+  }
+
+  $('theme-search-btn').onclick = runThemeSearch;
+  $('theme-query').addEventListener('keydown', (e) => { if (e.key === 'Enter') runThemeSearch(); });
+
+  // === FIREHOSE MODE ===
+  let currentFirehoseForm = '8-K';
+  document.querySelectorAll('#pane-firehose .chip[data-form]').forEach(b => {
+    b.onclick = () => {
+      document.querySelectorAll('#pane-firehose .chip[data-form]').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      currentFirehoseForm = b.dataset.form;
+      $('firehose-title').textContent = 'Latest ' + currentFirehoseForm + ' filings';
+      loadFirehose();
+    };
+  });
+
+  async function loadFirehose() {
+    $('firehose-status').innerHTML = '<span class="spinner"></span>Loading live ' + currentFirehoseForm + ' feed from SEC...';
+    $('firehose-results').innerHTML = '<div class="empty"><span class="spinner"></span>Loading...</div>';
+    const url = 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=' +
+                encodeURIComponent(currentFirehoseForm) + '&company=&dateb=&owner=include&count=40&output=atom';
+    const result = await fetchViaProxy(url, false);
+    if (!result.ok) {
+      $('firehose-status').textContent = 'Firehose failed: ' + (result.error || 'unknown');
+      $('firehose-status').className = 'status err';
+      $('firehose-results').innerHTML = '<div class="empty">Could not load. Try a different form type.</div>';
+      return;
+    }
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(result.data, 'application/xml');
+    const entries = doc.querySelectorAll('entry');
+    const filings = [];
+    entries.forEach(e => {
+      const title = e.querySelector('title')?.textContent || '';
+      const link = e.querySelector('link')?.getAttribute('href') || '';
+      const updated = e.querySelector('updated')?.textContent || '';
+      const summary = e.querySelector('summary')?.textContent || '';
+      let form = currentFirehoseForm, company = title;
+      const tm = title.match(/^([\w\-\/\s]+?)\s+-\s+(.+?)\s+\(/);
+      if (tm) { form = tm[1].trim(); company = tm[2]; }
+      const cikMatch = link.match(/CIK=(\d+)/) || summary.match(/CIK#?:?\s*(\d+)/);
+      const cik = cikMatch ? String(cikMatch[1]).padStart(10, '0') : '';
+      const filedMatch = summary.match(/Filed:?<\/b>?\s*([\d\-]+)/) || summary.match(/([\d]{4}-[\d]{2}-[\d]{2})/);
+      const filingDate = filedMatch ? filedMatch[1] : (updated ? updated.split('T')[0] : '');
+      filings.push({
+        form, company, cik, filingDate,
+        accession: '', primaryDoc: '',
+        primaryDesc: 'Filed ' + filingDate,
+        days: daysSince(filingDate),
+        directLink: link
+      });
+    });
+    $('firehose-status').textContent = 'Loaded ' + filings.length + ' latest filings.';
+    $('firehose-status').className = 'status';
+    $('firehose-results').innerHTML = '';
+    if (filings.length === 0) {
+      $('firehose-results').innerHTML = '<div class="empty">No filings returned.</div>';
+      return;
+    }
+    filings.forEach(f => {
+      const meta = classify(f.form);
+      f.classification = meta;
+      const div = document.createElement('div');
+      div.className = 'filing';
+      const indexUrl = f.cik ? 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=' + f.cik + '&type=&dateb=&owner=include&count=40' : f.directLink;
+      div.innerHTML =
+        '<div class="filing-head">' +
+          '<div>' +
+            '<span class="filing-type ' + meta.cls + '">' + meta.label + ' · ' + f.form + '</span>' +
+            '<span class="filing-co">' + f.company + '</span>' +
+          '</div>' +
+          '<div class="filing-date">' + f.filingDate + (isNaN(f.days) ? '' : ' (' + f.days + 'd ago)') + '</div>' +
+        '</div>' +
+        '<div class="filing-meta">' +
+          '<a class="filing-link" href="' + f.directLink + '" target="_blank" rel="noopener">Read filing</a>' +
+          ' · <a class="filing-link" href="' + indexUrl + '" target="_blank" rel="noopener">Company filings</a>' +
+        '</div>' +
+        '<div class="filing-why"><b>Why this matters:</b> ' + meta.why + '</div>';
+      $('firehose-results').appendChild(div);
+    });
+  }
+
+  // === NOTES MODE ===
+  function renderNotes() {
+    const notes = getNotes();
+    const c = $('notes-list');
+    c.innerHTML = '';
+    if (notes.length === 0) {
+      c.innerHTML = '<div class="empty">No notes saved yet.</div>';
+      return;
+    }
+    notes.forEach(n => {
+      const d = document.createElement('details');
+      d.className = 'notebook-entry';
+      const date = new Date(n.saved).toLocaleString();
+      d.innerHTML = '<summary>' + n.title + ' <span style="color:var(--text-faint);font-weight:400;font-size:11px;margin-left:6px;">' + date + '</span></summary>' +
+                    '<div class="note-body">' + n.body + '</div>' +
+                    '<div style="margin-top:10px;"><button class="small secondary" data-del="' + n.id + '">Delete</button></div>';
+      d.querySelector('[data-del]').onclick = () => {
+        if (!confirm('Delete this note?')) return;
+        const updated = getNotes().filter(x => x.id !== n.id);
+        saveNotes(updated);
+        renderNotes();
+      };
+      c.appendChild(d);
+    });
+  }
+
+  $('add-note-btn').onclick = () => {
+    const title = $('new-note-title').value.trim();
+    const body = $('new-note').value.trim();
+    if (!title || !body) { alert('Add both a title and body.'); return; }
+    const notes = getNotes();
+    notes.unshift({ id: Date.now(), title, body, saved: new Date().toISOString() });
+    saveNotes(notes);
+    $('new-note-title').value = '';
+    $('new-note').value = '';
+    renderNotes();
+  };
+
+  $('export-notes').onclick = () => {
+    const notes = getNotes();
+    if (notes.length === 0) { alert('No notes to export.'); return; }
+    let out = 'THE NOTEBOOK — exported ' + new Date().toLocaleString() + '\n\n';
+    notes.forEach(n => {
+      out += '=== ' + n.title + ' ===\n';
+      out += 'Saved: ' + new Date(n.saved).toLocaleString() + '\n\n';
+      out += n.body + '\n\n';
+    });
+    const blob = new Blob([out], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'notebook_' + new Date().toISOString().split('T')[0] + '.txt';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  $('clear-notes').onclick = () => {
+    if (!confirm('Delete ALL notes? This cannot be undone.')) return;
+    saveNotes([]);
+    renderNotes();
+  };
+
+  // === INITIALIZE ===
+  renderThemeCards();
+  renderWatchlist();
+  renderNotes();
+  testConnection().then(() => {
+    loadFirehose();
+  });
+
+})();
+</script>
+</body>
+</html>
