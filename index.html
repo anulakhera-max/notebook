@@ -250,6 +250,27 @@
   <!-- ============ HELP PANE ============ -->
   <div class="pane" id="pane-help">
     <div class="panel">
+      <h2>Optional: AI-powered summaries</h2>
+      <p>For dramatically better 8-K summaries, you can connect an Anthropic Claude API key. The tool will use Claude to read each filing and give you a real plain-English summary. Without a key, you get rule-based extraction (works but rougher).</p>
+      <div style="font-size: 14px; line-height: 1.7;">
+        <p><b>How to get a key:</b></p>
+        <ol style="padding-left: 22px;">
+          <li>Sign up free at <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--info);">console.anthropic.com</a></li>
+          <li>Add $5 of credit (covers thousands of summaries — each costs ~$0.005)</li>
+          <li>Go to API Keys, click "Create Key"</li>
+          <li>Copy the key (starts with <code>sk-ant-</code>) and paste below</li>
+        </ol>
+        <p><b>Privacy:</b> Your key is saved only in your browser's local storage. It is sent directly from your browser to Anthropic, never to me or any third party.</p>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;">
+        <input type="password" id="anthropic-key-input" placeholder="sk-ant-... (paste here)" style="flex:1; font-family:var(--mono); font-size:12px; text-transform:none; letter-spacing:0;" autocomplete="off" />
+        <button id="save-anthropic-key">Save key</button>
+        <button id="clear-anthropic-key" class="secondary">Remove key</button>
+      </div>
+      <div id="anthropic-key-status" style="font-size:12px; color:var(--text-soft); margin-top:8px; font-style:italic;"></div>
+    </div>
+
+    <div class="panel">
       <h2>What this tool does</h2>
       <p>It reads the documents that smart money reads — SEC filings — and surfaces what matters.</p>
       <div style="font-size: 14px; line-height: 1.7;">
@@ -586,14 +607,15 @@
   }
 
   // === 8-K SUMMARIZER ===
-  // 8-K filings on SEC.gov are actually directory listings (index pages) pointing to:
-  //   - The 8-K body itself (usually *-8k.htm or named similarly)
-  //   - Exhibit attachments (EX-99.1 press release is where the real news usually is)
-  //   - IXBRL data files (skip)
-  //   - Images (skip)
-  // We need to find the right files, fetch them, and extract substance.
+  // Strategy:
+  //   1. Fetch the filing index page (the "folder listing")
+  //   2. Find the press release exhibit (EX-99.1 etc.) — this is where the actual news lives
+  //   3. Find the 8-K body — only used to extract Item codes (not substance)
+  //   4. Extract readable content from the press release
+  //   5. If user has provided Anthropic API key, send to Claude for clean summary
+  //      Otherwise use rule-based extraction
   async function summarize8K(filingUrl) {
-    // Step 1: Fetch the index/landing page
+    // Step 1: Fetch the index page
     const indexResult = await fetchViaProxy(filingUrl, false);
     if (!indexResult.ok) {
       return { ok: false, error: indexResult.error || 'Could not fetch filing index' };
@@ -602,9 +624,13 @@
     const parser = new DOMParser();
     const indexDoc = parser.parseFromString(indexResult.data, 'text/html');
 
-    // Step 2: Find the 8-K body document and the press release exhibit from the index table
+    // Step 2: Parse the document table from the index
+    // SEC index pages have a "Document Format Files" table with columns: Seq, Description, Document, Type, Size
     let bodyUrl = '';
-    let pressReleaseUrl = '';
+    let pressReleaseUrls = [];
+    let bodyDescription = '';
+    let pressDescription = '';
+
     const tables = indexDoc.querySelectorAll('table');
     for (const tbl of tables) {
       const rows = tbl.querySelectorAll('tr');
@@ -612,140 +638,244 @@
         const cells = row.querySelectorAll('td');
         if (cells.length < 4) continue;
         const description = (cells[1]?.textContent || '').trim();
-        const link = cells[2]?.querySelector('a');
+        const linkEl = cells[2]?.querySelector('a');
         const type = (cells[3]?.textContent || '').trim().toUpperCase();
-        if (!link) continue;
-        const href = link.getAttribute('href');
+        if (!linkEl) continue;
+        let href = linkEl.getAttribute('href');
         if (!href) continue;
-        const fullUrl = href.startsWith('http') ? href : 'https://www.sec.gov' + href;
-        // Skip XBRL, XML, image files
-        if (/\.(xml|xsd|jpg|jpeg|png|gif|js|css)$/i.test(href)) continue;
-        if (href.indexOf('R1.htm') >= 0 || href.indexOf('FilingSummary') >= 0) continue;
-        // The 8-K body is type "8-K" in the table
+        // Convert iXBRL viewer URLs to direct document URLs
+        // Pattern: /ix?doc=/Archives/... → /Archives/...
+        if (href.indexOf('/ix?doc=') >= 0) {
+          href = href.replace(/^.*\/ix\?doc=/, '');
+        }
+        const fullUrl = href.startsWith('http') ? href : 'https://www.sec.gov' + (href.startsWith('/') ? href : '/' + href);
+        // Skip non-document files
+        if (/\.(xml|xsd|jpg|jpeg|png|gif|js|css|zip)$/i.test(href)) continue;
+        if (/R\d+\.htm|FilingSummary|MetaLinks/i.test(href)) continue;
+
+        // 8-K body
         if (!bodyUrl && (type === '8-K' || type === '8-K/A' || type.startsWith('8-K'))) {
           bodyUrl = fullUrl;
+          bodyDescription = description;
         }
-        // Press release exhibits are usually EX-99.1, EX-99.2 etc.
-        if (!pressReleaseUrl && (type.startsWith('EX-99') || /ex-?99/i.test(href) || /ex99/i.test(href))) {
-          pressReleaseUrl = fullUrl;
+        // Press release exhibits — most important for content
+        if (type.startsWith('EX-99') || /ex.?99/i.test(href)) {
+          pressReleaseUrls.push({ url: fullUrl, description: description, type: type });
+          if (!pressDescription) pressDescription = description;
         }
       }
     }
 
-    // Fallback: if the index URL itself looks like the body document
-    if (!bodyUrl && /\-8k\.htm/i.test(filingUrl)) {
-      bodyUrl = filingUrl;
-    }
-
-    // Step 3: Fetch the body and (if exists) press release
+    // Step 3: Fetch the body (for item codes) and press release (for content) in parallel
     const fetches = [];
-    if (bodyUrl) fetches.push(fetchViaProxy(bodyUrl, false));
-    if (pressReleaseUrl) fetches.push(fetchViaProxy(pressReleaseUrl, false));
+    if (bodyUrl) fetches.push(fetchViaProxy(bodyUrl, false).then(r => ({ kind: 'body', result: r })));
+    // Fetch the first press release (usually EX-99.1 is the main one)
+    if (pressReleaseUrls.length > 0) {
+      fetches.push(fetchViaProxy(pressReleaseUrls[0].url, false).then(r => ({ kind: 'press', result: r })));
+    }
 
     if (fetches.length === 0) {
-      return { ok: false, error: 'Could not find 8-K body document in filing index' };
+      return { ok: false, error: 'No 8-K body or press release exhibit found in this filing' };
     }
 
-    const results = await Promise.all(fetches);
-    const bodyText = results[0]?.ok ? extractTextFromHtml(results[0].data) : '';
-    const releaseText = results[1]?.ok ? extractTextFromHtml(results[1].data) : '';
+    const fetchResults = await Promise.all(fetches);
+    let bodyText = '';
+    let pressText = '';
+    fetchResults.forEach(fr => {
+      if (fr.kind === 'body' && fr.result.ok) bodyText = extractTextFromHtml(fr.result.data);
+      if (fr.kind === 'press' && fr.result.ok) pressText = extractTextFromHtml(fr.result.data);
+    });
 
     // Step 4: Extract Item codes from the body
     const itemMatches = [...bodyText.matchAll(/Item\s+(\d+\.\d+)/gi)];
     const uniqueItems = [...new Set(itemMatches.map(m => m[1]))];
 
-    // Step 5: Get substance — prefer press release for newsy content
-    let substance = '';
-    let substanceSource = '';
-    if (releaseText && releaseText.length > 200) {
-      substance = extractKeySentences(releaseText, 5);
-      substanceSource = 'press release';
-    } else if (bodyText) {
-      // Get the substance per Item, joining the first meaningful chunks from each Item section
-      const sections = [];
-      for (const item of uniqueItems) {
-        const itemRegex = new RegExp(
-          'Item\\s+' + item.replace('.', '\\.') +
-          '\\.?\\s*([A-Z][^.]{5,200}\\.)?\\s*(.{50,1200}?)(?=Item\\s+\\d+\\.\\d+|SIGNATURES|Pursuant to the requirements)',
-          'is'
-        );
-        const match = bodyText.match(itemRegex);
-        if (match && match[2]) {
-          let chunk = match[2].trim().replace(/\s+/g, ' ');
-          // Trim to first 400 chars
-          if (chunk.length > 400) chunk = chunk.substring(0, 400) + '...';
-          sections.push({ item: item, label: EIGHT_K_ITEMS[item]?.label || item, text: chunk });
-        }
+    // Step 5: Choose content source — press release strongly preferred
+    let rawContent = '';
+    let contentSource = '';
+    if (pressText && pressText.length > 200) {
+      rawContent = pressText;
+      contentSource = 'press release';
+    } else if (bodyText && bodyText.length > 200) {
+      rawContent = bodyText;
+      contentSource = 'filing body';
+    }
+
+    // Step 6: Decide between AI summarization and rule-based extraction
+    const aiKey = localStorage.getItem('tn_anthropic_key');
+    let summary = '';
+    let summaryMethod = '';
+
+    if (aiKey && rawContent && rawContent.length > 200) {
+      // Use Claude for clean summarization
+      const aiResult = await summarizeWithClaude(rawContent.substring(0, 8000), uniqueItems, aiKey);
+      if (aiResult.ok) {
+        summary = aiResult.summary;
+        summaryMethod = 'AI';
       }
-      if (sections.length > 0) {
-        substance = sections.map(s => '<b>Item ' + s.item + ' (' + s.label + '):</b> ' + s.text).join('<br><br>');
-        substanceSource = 'filing body';
-      } else {
-        substance = extractKeySentences(bodyText, 4);
-        substanceSource = 'filing body';
-      }
+    }
+
+    if (!summary && rawContent) {
+      // Rule-based fallback: smart sentence extraction
+      summary = extractBusinessSummary(rawContent);
+      summaryMethod = 'rules';
     }
 
     return {
       ok: true,
       items: uniqueItems,
-      substance: substance,
-      substanceSource: substanceSource,
+      summary: summary,
+      contentSource: contentSource,
+      summaryMethod: summaryMethod,
       bodyUrl: bodyUrl,
-      pressReleaseUrl: pressReleaseUrl,
-      itemDetails: uniqueItems.map(i => EIGHT_K_ITEMS[i]).filter(x => x)
+      pressReleaseUrl: pressReleaseUrls[0]?.url || '',
+      pressDescription: pressDescription || bodyDescription
     };
   }
 
-  // Helper: extract plain readable text from HTML, stripping boilerplate
+  // Claude API summarization
+  async function summarizeWithClaude(text, items, apiKey) {
+    const itemContext = items.length > 0
+      ? 'The filing covers SEC 8-K Items: ' + items.map(i => i + ' (' + (EIGHT_K_ITEMS[i]?.label || 'unknown') + ')').join(', ') + '. '
+      : '';
+    const prompt = itemContext + 'Below is the actual content of an SEC 8-K filing or its press release. Summarize the key business news in 3-5 plain-English sentences. Focus on: what specifically happened, who is involved, dollar amounts if any, and what it means for shareholders. Skip all forward-looking statement disclaimers and boilerplate. If executive changes, name them. If financial guidance, state the numbers.\n\n---\n\n' + text;
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 500,
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+      if (!r.ok) {
+        const errText = await r.text();
+        return { ok: false, error: 'API ' + r.status + ': ' + errText.substring(0, 200) };
+      }
+      const data = await r.json();
+      const summary = data.content?.[0]?.text || '';
+      return { ok: true, summary };
+    } catch(e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
+  // Helper: extract plain readable text from HTML
   function extractTextFromHtml(html) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
-    doc.querySelectorAll('style, script, head, meta, link, table[summary*="Document"], table[summary*="Filing"]').forEach(n => n.remove());
+    // Remove non-content elements
+    doc.querySelectorAll('style, script, head, meta, link, noscript').forEach(n => n.remove());
+    // Try to find the main content (often inside <body>, sometimes inside a specific div)
     let text = doc.body ? doc.body.textContent : (doc.documentElement ? doc.documentElement.textContent : '');
-    text = text.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
-    // Strip very common SEC boilerplate headers
+    text = text.replace(/\u00a0/g, ' ').replace(/\u2018|\u2019/g, "'").replace(/\u201c|\u201d/g, '"').replace(/\s+/g, ' ').trim();
+
+    // Strip SEC boilerplate
+    text = text.replace(/Please enable JavaScript to use the EDGAR Inline XBRL Viewer\.[\s\S]{0,500}/gi, '');
     text = text.replace(/UNITED STATES SECURITIES AND EXCHANGE COMMISSION[\s\S]{0,400}?Current Report/i, '');
-    text = text.replace(/Pursuant to Section 13 or 15.d. of the Securities Exchange Act of 1934/gi, '');
-    text = text.replace(/Check the appropriate box[\s\S]{0,500}?Title of each class/i, '');
+    text = text.replace(/Pursuant to Section 13 or 15.?d.? of the Securities Exchange Act of 1934\.?/gi, '');
+    text = text.replace(/Check the appropriate box[\s\S]{0,600}?Title of each class/i, '');
     text = text.replace(/Indicate by check mark[\s\S]{0,500}/i, ' ');
     text = text.replace(/Title of each class\s+Trading Symbol\s+Name of each exchange[^.]*\./i, '');
     text = text.replace(/Emerging growth company[\s\S]{0,200}/i, '');
-    text = text.replace(/If an emerging growth company[\s\S]{0,400}/i, '');
-    text = text.replace(/Securities registered pursuant to Section 12\(b\)[\s\S]{0,400}/i, '');
+    text = text.replace(/Securities registered pursuant to Section 12.b.[\s\S]{0,400}/i, '');
+    text = text.replace(/SIGNATURES?[\s\S]*$/i, '');
     text = text.replace(/\s+/g, ' ').trim();
     return text;
   }
 
-  // Helper: pull the most substantive sentences from a text block
-  function extractKeySentences(text, sentenceCount) {
-    // Split by sentence-ending punctuation
+  // Rule-based business summary extraction
+  function extractBusinessSummary(text) {
     const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
-    // Score sentences: prefer ones that mention dates, dollar amounts, executive titles, or action verbs
-    const scored = sentences.map(s => {
+    if (sentences.length === 0) return text.substring(0, 600);
+
+    // Aggressively penalize boilerplate sentences
+    const boilerplatePatterns = [
+      /forward[\s-]?looking/i,
+      /cautionary statement/i,
+      /safe harbor/i,
+      /risk factors/i,
+      /actual results may differ/i,
+      /undertakes no obligation/i,
+      /private securities litigation/i,
+      /pursuant to the requirements/i,
+      /duly caused this report/i,
+      /signed on behalf/i,
+      /press release issued/i,
+      /attached hereto/i,
+      /incorporated by reference/i,
+      /exhibit \d+/i,
+      /hereby furnished/i,
+      /information furnished/i,
+      /shall not be deemed/i,
+      /\bnot a Risk \- Bearing\b/i,
+      /\bplan exposure\b/i,
+      /CAGR is calculated/i,
+      /Exposed to Catastrophic Losses/i,
+      /^Words such as/i,
+      /\bidentify these forward/i,
+      /\bvariations of these terms\b/i,
+      /^Item \d+\.\d+\.?$/,
+      /^Date:\s+\w+/i,
+      /^Exhibit/i
+    ];
+
+    const scored = sentences.map((s, idx) => {
       const trimmed = s.trim();
       let score = 0;
-      // Boost for newsy content
-      if (/\b(announced|reported|entered|appointed|resigned|completed|acquired|will|effective|agreed)\b/i.test(trimmed)) score += 3;
-      if (/\$[\d,]+|[\d,]+\s+shares|million|billion/i.test(trimmed)) score += 2;
-      if (/\b(20\d{2}|January|February|March|April|May|June|July|August|September|October|November|December)\b/i.test(trimmed)) score += 1;
-      if (/\b(CEO|CFO|COO|CTO|President|Director|Officer|Chairman|Board)\b/i.test(trimmed)) score += 2;
-      // Penalize short sentences (probably noise) or very long ones (probably boilerplate)
-      if (trimmed.length < 40) score -= 2;
-      if (trimmed.length > 400) score -= 1;
-      // Penalize boilerplate keywords
-      if (/cautionary statement|forward.looking|risk factors|safe harbor|exhibits attached|incorporated by reference|hereby|herewith/i.test(trimmed)) score -= 3;
-      return { text: trimmed, score };
+
+      // Strong positive signals — real business news
+      if (/\b(announced|reported|disclosed|completed|entered|signed|agreed|launched)\b/i.test(trimmed)) score += 4;
+      if (/\b(appointed|elected|named|hired|resigned|departed|terminated|retired)\b/i.test(trimmed)) score += 4;
+      if (/\b(acquired|acquisition|merger|sold|divested|disposed)\b/i.test(trimmed)) score += 4;
+      if (/\b(revenue|earnings|EPS|net income|net loss|guidance|growth)\b.{0,80}(\$|\d+%)/i.test(trimmed)) score += 5;
+      if (/\$[\d,]+\s*(million|billion|thousand|M|B)?/i.test(trimmed)) score += 3;
+      if (/\b\d+(?:,\d{3})*(?:\.\d+)?\s*(shares|units|tons|barrels)\b/i.test(trimmed)) score += 2;
+      if (/\b(CEO|CFO|COO|CTO|President|Chairman|Chief Executive|Chief Financial)\b/i.test(trimmed)) score += 3;
+
+      // Dates and timing
+      if (/\b(20\d{2})\b/.test(trimmed)) score += 1;
+      if (/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d/i.test(trimmed)) score += 1;
+      if (/\b(quarter|Q[1-4]|fiscal year|annual)\b/i.test(trimmed)) score += 1;
+
+      // Earlier sentences are usually more important in press releases
+      if (idx < 5) score += 2;
+      if (idx < 10) score += 1;
+
+      // Length filtering
+      if (trimmed.length < 50) score -= 3;
+      if (trimmed.length > 500) score -= 2;
+      if (trimmed.length > 350) score -= 1;
+
+      // Heavy boilerplate penalty
+      boilerplatePatterns.forEach(p => { if (p.test(trimmed)) score -= 10; });
+
+      // Penalize sentences that look like marketing bullet points
+      if (/^\d+\s+[A-Z]/.test(trimmed)) score -= 3;
+      if (/—\s*$/.test(trimmed)) score -= 2;
+      if (trimmed.split(' ').length < 8) score -= 2;
+
+      return { text: trimmed, score, idx };
     });
+
+    // Take top 4 sentences, but maintain original reading order
     scored.sort((a, b) => b.score - a.score);
-    const top = scored.slice(0, sentenceCount).filter(s => s.score > -2);
+    const top = scored.slice(0, 4).filter(s => s.score > 0);
+
     if (top.length === 0) {
-      // Fallback: first few sentences
-      return sentences.slice(0, sentenceCount).map(s => s.trim()).join(' ');
+      // Last resort: find sentences mentioning key business verbs at the start of the document
+      const firstFew = sentences.slice(0, 8).filter(s => s.length > 60 && s.length < 400);
+      return firstFew.slice(0, 3).map(s => s.trim()).join(' ') || sentences.slice(0, 3).map(s => s.trim()).join(' ');
     }
-    // Re-sort top sentences to their original order so they read naturally
-    const topSet = new Set(top.map(s => s.text));
-    return sentences.filter(s => topSet.has(s.trim())).map(s => s.trim()).join(' ');
+
+    top.sort((a, b) => a.idx - b.idx);
+    return top.map(s => s.text).join(' ');
   }
 
   // === WATCHLIST MODE ===
@@ -904,19 +1034,19 @@
           });
           html += '</ul>';
         }
-        if (result.substance) {
-          const sourceLabel = result.substanceSource === 'press release' ? 'From the press release' : 'From the filing';
-          html += '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border-soft);"><b>' + sourceLabel + ':</b><br>';
-          html += '<div style="color:var(--text-soft);margin-top:6px;">' + result.substance + '</div></div>';
+        if (result.summary) {
+          const sourceLabel = result.contentSource === 'press release' ? 'Press release summary' : 'Filing summary';
+          const methodNote = result.summaryMethod === 'AI' ? ' <span style="font-size:10px;color:var(--good);">· AI-summarized</span>' : '';
+          html += '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border-soft);"><b>' + sourceLabel + ':</b>' + methodNote + '<br>';
+          html += '<div style="color:var(--text-soft);margin-top:6px;">' + result.summary + '</div></div>';
         }
-        if (!result.items.length && !result.substance) {
-          html += '<span style="color:var(--text-soft);">No standard Item codes or readable substance extracted. The filing may be image-based or have an unusual format. Click "Read filing" to see it directly.</span>';
+        if (!result.items.length && !result.summary) {
+          html += '<span style="color:var(--text-soft);">No standard Item codes or readable content extracted. The filing may use a non-standard format. Click "Read filing" to view it directly on SEC.gov.</span>';
         }
         area.innerHTML = html;
-        // Plain-text version for notebook saves
         const itemsList = result.items.map(c => 'Item ' + c + ': ' + (EIGHT_K_ITEMS[c]?.label || 'unknown')).join('; ');
-        const plainSubstance = result.substance.replace(/<[^>]+>/g, '').substring(0, 500);
-        area.dataset.plainText = itemsList + ' — ' + plainSubstance;
+        const plainSummary = (result.summary || '').replace(/<[^>]+>/g, '').substring(0, 500);
+        area.dataset.plainText = itemsList + ' — ' + plainSummary;
       };
     }
 
@@ -1155,13 +1285,14 @@
             });
             html += '</ul>';
           }
-          if (result.substance) {
-            const sourceLabel = result.substanceSource === 'press release' ? 'From the press release' : 'From the filing';
-            html += '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border-soft);"><b>' + sourceLabel + ':</b><br>';
-            html += '<div style="color:var(--text-soft);margin-top:6px;">' + result.substance + '</div></div>';
+          if (result.summary) {
+            const sourceLabel = result.contentSource === 'press release' ? 'Press release summary' : 'Filing summary';
+            const methodNote = result.summaryMethod === 'AI' ? ' <span style="font-size:10px;color:var(--good);">· AI-summarized</span>' : '';
+            html += '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border-soft);"><b>' + sourceLabel + ':</b>' + methodNote + '<br>';
+            html += '<div style="color:var(--text-soft);margin-top:6px;">' + result.summary + '</div></div>';
           }
-          if (!result.items.length && !result.substance) {
-            html += '<span style="color:var(--text-soft);">No standard Item codes or readable substance extracted. The filing may be image-based or have an unusual format. Click "Read filing" to see it directly.</span>';
+          if (!result.items.length && !result.summary) {
+            html += '<span style="color:var(--text-soft);">No standard Item codes or readable content extracted. The filing may use a non-standard format. Click "Read filing" to view it directly on SEC.gov.</span>';
           }
           area.innerHTML = html;
         };
@@ -1249,10 +1380,39 @@
     renderNotes();
   };
 
+  // === ANTHROPIC API KEY MANAGEMENT ===
+  function updateAnthropicKeyStatus() {
+    const key = localStorage.getItem('tn_anthropic_key');
+    const status = $('anthropic-key-status');
+    if (key) {
+      status.innerHTML = '✓ <span style="color:var(--good);">AI summaries enabled.</span> Key: <code>' + key.substring(0, 12) + '...' + key.substring(key.length - 4) + '</code>';
+    } else {
+      status.innerHTML = 'No key set. Using rule-based summaries.';
+    }
+  }
+
+  $('save-anthropic-key').onclick = () => {
+    const k = $('anthropic-key-input').value.trim();
+    if (!k || !k.startsWith('sk-ant-')) {
+      $('anthropic-key-status').innerHTML = '<span style="color:var(--bad);">Key should start with sk-ant-. Check that you copied the full key.</span>';
+      return;
+    }
+    localStorage.setItem('tn_anthropic_key', k);
+    $('anthropic-key-input').value = '';
+    updateAnthropicKeyStatus();
+  };
+
+  $('clear-anthropic-key').onclick = () => {
+    if (!confirm('Remove your Anthropic API key from this browser?')) return;
+    localStorage.removeItem('tn_anthropic_key');
+    updateAnthropicKeyStatus();
+  };
+
   // === INITIALIZE ===
   renderThemeCards();
   renderWatchlist();
   renderNotes();
+  updateAnthropicKeyStatus();
   testConnection().then(() => {
     loadFirehose();
   });
